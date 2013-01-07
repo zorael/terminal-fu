@@ -1,0 +1,62 @@
+#!/bin/bash
+
+EXCLAM="!"		# exclamation marks collide with some built-in bash feature
+
+usage() {
+	echo "usage: $0 [human readable name] [process] [executable] [timeout] [skipdialog boolean] [donotfork boolean]"
+}
+
+if [ ! "$1" ]; then
+	usage
+	exit 0
+elif [ ! "$2" ] || [ ! "$3" ]; then
+	echo "error: insufficient arguments"
+	usage
+	exit 1
+fi
+
+NAME=$1
+PROCESS=$2
+EXECUTABLE=$3
+TIMEOUT=$4
+SKIPDIALOG=$5
+DONOTFORK=$6
+
+[ ! "$TIMEOUT" ] && TIMEOUT=6
+if [ "$SKIPDIALOG" == "false" ] || [ "$SKIPDIALOG" == 0 ]; then unset SKIPDIALOG; fi
+if [ "$DONOTFORK" == "false" ] || [ "$DONOTFORK" == 0 ]; then unset DONOTFORK; fi
+
+TITLE="<strong>$NAME</strong>"
+TEXT="<p>This application is already running${EXCLAM}</p> \
+<p>Look for its icon in your task manager, and/or your system tray.</p> \
+<p>If it is nowhere to be found, it may have hung, in which case you may need to forcedly close the process."
+
+# all ready!
+
+FULLPATH="$(which "$EXECUTABLE")"
+if [ ! "$FULLPATH" ] || [ ! -x "$FULLPATH" ]; then
+	echo "file $EXECUTABLE could not be read or is not executable"
+	exit 1
+fi
+
+PID="$(pidof $PROCESS)"
+if [ "$PID" ]; then
+	# application is running
+	echo "$NAME (${PROCESS}:${PID}) is already running"
+	[ ! "$SKIPDIALOG" ] && kdialog --title "$TITLE" --passivepopup "$TEXT" $TIMEOUT
+else
+	# application is not running; start
+	echo "running $EXECUTABLE..."
+	if [ ! "$DONOTFORK" ]; then
+		# fork!
+		"$EXECUTABLE" &
+		echo "forked process $!"
+		exit 0
+	else
+		# start normally
+		"$EXECUTABLE"
+		ERRORLEVEL=$?
+		echo "application exited with errrorlevel $ERRORLEVEL"
+		exit $ERRORLEVEL
+	fi
+fi

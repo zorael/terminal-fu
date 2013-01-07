@@ -1,0 +1,103 @@
+#!/bin/bash
+# find littering files in otherwise managed directories
+
+BASENAME="${0##*/}"
+TEMPDIR="$(mktemp -d /tmp/$BASENAME.XXXXXX)"
+SUMMARY="/tmp/$BASENAME.log"
+WORKERS=32
+RESPITE=0.1
+BATCHSIZE=100
+STRING_RUNNING="Running"
+STRING_DPKG_ERR="dpkg-query: no path found matching pattern"
+
+
+index_files() {
+	find /{bin,boot,etc,lib*,opt,sbin,usr} \(\
+		-path /usr/local -o \
+		-path /lib/modules -o \
+		-path /usr/src -o \
+		-path /usr/share/man -o \
+		-path /usr/share/mime -o \
+		-path /etc/NetworkManager/system-connections -o \
+		-name \*\~ -o \
+		-name .git -o \
+		-name .svn -o \
+		-name .bzr -o \
+		-name *kate-swp -o \
+		-name *.dpkg-old -o \
+		-name *.dpkg-new -o \
+		-name *.dpkg-bak -o \
+		-name *.ucf-old -o \
+		-name *.ucf-dist -o \
+		-name *.ucf-bak -o \
+		-name *.pyo -o \
+		-name *.pyc \
+		\) -prune -o -type f -print 2>/dev/null
+}
+
+cleanup() {
+	trap - EXIT
+	[[ "$1" != EXIT ]] && printf ' [caught %s] ' $1
+	waitforjobs
+	rm -f "$SUMMARY"
+	cat "$TEMPDIR"/batch.* 2>/dev/null | sort -u | sed "s/$STRING_DPKG_ERR //g" > "$SUMMARY"
+	rm -rf "$TEMPDIR"
+	[[ -f "$SUMMARY" ]] && printf '\n\nsee summary at %s\n' "$SUMMARY"
+}
+
+waitforjobs() {
+	local nagged
+	while [[ $(jobs | grep -c $STRING_RUNNING) -gt 0 ]]; do
+		[[ ! $nagged ]] && printf '\n\n[waiting for jobs to finish] '
+		nagged=1
+		sleep $RESPITE
+	done
+}
+
+do_loop() {
+	local IFS files n i
+	IFS=$'\n'
+
+	printf 'indexing files ...'
+	files=( $(index_files) )
+	printf ' %d files to look up.\n' ${#files[@]}
+	printf 'starting loop with up to %d workers each running batches of %d files\n' \
+		$WORKERS $BATCHSIZE
+
+	for n in $(seq 0 $BATCHSIZE ${#files[@]}); do
+		while [[ $(jobs | grep -c "$STRING_RUNNING") -ge $WORKERS ]]; do
+			printf 'S'
+			sleep $RESPITE
+		done
+		unset args
+		for i in $(seq 0 $BATCHSIZE); do
+			args="$args ${files[$n+$i]}"
+			#args[$i]="${files[$n+$i]}"
+		done
+		lookup_files $args &
+		#lookup_files ${args[@]} &
+	done
+}
+
+lookup_files() {
+	local IFS files output
+	IFS=' '
+	files=( "$@" )
+	output="$(dpkg -S ${files[@]} 2>&1 1>/dev/null)"
+	[[ ! $output ]] && { printf '.'; return; }
+	echo "$output" >> "$(mktemp "${TEMPDIR}/batch.XXXXXX}")"
+	printf '+'
+}
+
+main() {
+	for signal in EXIT SIGTERM SIGKILL SIGHUP; do
+		trap "cleanup $signal" $signal
+	done
+	do_loop
+}
+
+
+## execution start ##
+
+main
+exit $?

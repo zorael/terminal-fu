@@ -1,0 +1,8 @@
+#!/bin/bash
+
+while :; do
+	buffer="$(sensors -A)" || break
+	[ ! "$1" ] && clear
+	echo "$buffer"
+	sleep 1
+done

@@ -1,0 +1,85 @@
+#!/bin/bash
+
+ALL=/tmp/orphan.all
+USED=/tmp/orphan.used
+UNUSED=/tmp/orphan.unused
+MISSING=/tmp/orphan.missing
+
+cat /dev/null > "$ALL" > "$USED" > "$UNUSED" > "$MISSING" || exit 1
+
+IFS=$'\n'
+
+foreach() {
+  local IFS lambda _dir _file
+  lambda="$1"
+  for _dir in /{{*bin,lib*},usr/{*bin,lib*,local/{*bin,lib*}}}; do
+    while read _file; do
+      [[ $# -gt 0 ]] && lambda || echo $_file
+    done <<< $(find -type f "$dir")
+  done
+}
+
+index_all() {
+  echo "Indexing files."
+  find /{{*bin,lib*},usr/{*bin,lib*,local/{*bin,lib*}}} -type f 2>&1 >> "$ALL"
+  sort -u "$ALL" > "${ALL}.temp"
+  mv -f "${ALL}.temp" "$ALL" || exit 1
+}
+
+index_used() {
+  echo "Indexing used."
+  while read _file; do
+    ldd $_file >> "$USED"
+  done < "$ALL"
+  sort -u "$USED" > "${USED}.temp" || exit 1
+  mv -f "${USED}.temp" "$USED" || exit 1
+}
+
+find_missing() {
+  grep 'not found' "$USED"
+}
+
+find_unused() {
+  while read _lib; do
+    grep -q "${_lib##*/}" "$ALL" || echo "$_lib may be unused"
+  done < "$ALL"
+}
+
+get_missing() {
+  grep 'not found' "$ALL"
+}
+
+main() {
+  index_all
+  index_used
+  find_missing
+  find_unused
+}
+
+main
+exit 0
+
+#echo "Checking for missing dependencies."
+echo "Indexing all."
+for dir in /{{*bin,lib*},usr/{*bin,lib*,local/{*bin,lib*}}}; do
+  find -type f "$dir" 2>&1
+  #while read file; do
+    #[[ ${file#*not found} ]] && echo ${file% =>*} >> "$MISSING" || echo ${file% =>*} >> "$USED"
+  #done <<< $(find -type f "$dir" 2>&1)
+done <<< $(find -type f "$dir")
+
+echo "Indexing used."
+
+#sort -u "$MISSING" > "${MISSING}.2"
+#sort -u "$USED" > "${USED}.2"
+
+while read lib; do
+  [[ ! grep -q "$lib" "$USED" ]]
+done <<< $(find -type f -name *.so)
+
+echo "Checking for unused libraries."
+for I in `ls /lib/*.so /usr/lib/*.so /usr/local/lib/*.so`; do
+  if ! grep `basename $I .so` $T > /dev/null; then
+    echo "$I might be unused.";
+  fi
+done

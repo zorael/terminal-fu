@@ -1,0 +1,20 @@
+#!/bin/bash
+
+[[ -d /sys/kernel/mm/uksm ]] || { echo "uksm not enabled in kernel"; exit 1; }
+
+SHARING=`cat /sys/kernel/mm/uksm/pages_sharing`
+SHARED=`cat /sys/kernel/mm/uksm/pages_shared`
+SAVED=`echo ${SHARING}-${SHARED}|bc`
+ZP=`cat /proc/meminfo | grep KsmZeroPages |awk -e '{print $2}'`
+
+SHARING_MB=`echo ${SHARING}*4096/1024/1024 | bc`
+SHARED_MB=`echo ${SHARED}*4096/1024/1024 | bc`
+SAVED_MB=`echo ${SAVED}*4096/1024/1024 | bc`
+ZP_MB=`echo ${ZP}/1024 | bc`
+TOTAL_MB=`echo ${SAVED_MB}+${ZP_MB} | bc`
+
+printf "unit\tsharing\tshared\tsaved\t0 pages\ttotal\n"
+printf -- "---------------------------------------------\n"
+printf "pages\t${SHARING}\t${SHARED}\t${SAVED}\n"
+printf "Mbytes\t${SHARING_MB}\t${SHARED_MB}\t${SAVED_MB}\t${ZP_MB}\t${TOTAL_MB}\n"
+

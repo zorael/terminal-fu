@@ -1,0 +1,21 @@
+#!/bin/bash
+
+[[ -f "${1:-patch_list}" ]] || { echo "missing patch_list"; exit 1; }
+
+#while read f; do
+#    [[ -f "$f" ]] || { echo "missing/moved: $f"; continue; }
+#    dir="listed/$(dirname $f)"
+#    [[ ! -d "$dir" ]] && mkdir -p "$dir"
+#    mv -v "$f" "$dir/"
+#done <<< "$(cat patch_list  | grep -v '^\(#\|$\)')"
+
+i=0
+while read p; do
+    [[ $p ]] || continue
+    echo "$p" | grep -q '^#' && continue
+    [[ -f $p ]] || p="$(basename $p)"
+    [[ -f $p ]] || continue
+    [[ -d listed ]] || mkdir listed
+    i=$((i+1))
+    mv "$p" "listed/$(printf '%03d-%s.patch' $i "$p")"
+done < patch_list

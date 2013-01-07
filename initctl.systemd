@@ -1,0 +1,307 @@
+#!/bin/bash
+# systemctl wrapper around upstart's CLI service management tool /sbin/initctl
+# This script will try to emulate initctl behavior and output within reason.
+
+# 1. Save this as initctl.systemd someplace
+#    /opt or /usr/local/bin will do if you don't want to pollute /sbin
+# 2. Rename /sbin/initctl to /sbin/initctl.upstart
+# 3. Symlink this script to /sbin/initctl
+# 4. Redo upon upstart package upgrade
+
+if ! ( [ -e /usr/bin/systemd-notify ] && systemd-notify --booted ); then
+    # system is not running systemd; pass everything transparently to upstart
+    VERB="${0##*/}"
+    [ ! "${VERB%initctl*}" ] && { VERB="$1"; shift; }
+    /sbin/initctl.upstart "$VERB" "$@"
+    exit $?
+fi
+
+
+## Constants ##################################################################
+
+# Paths
+PATH_UNITS="/etc/systemd/system:/lib/systemd/system"
+PATH_SYSV_INIT_FILES="/etc/init.d"
+
+# Uncomment to allow for exiting with errors -- may break package installation
+#HONEST_ERRORLEVELS=1
+
+
+## Functions ##################################################################
+
+err() {
+    # spouts an error message and exits
+    # arg $1:   error message by shorthand constant ERR_* or as custom snippet
+    
+    local error="$1"
+    local msg
+    shift
+    
+    case "$error" in
+        ERR_INSUFFICIENT_ARGS)
+            local function="$1"
+            shift
+            msg="Insufficient arguments sent to $function()${1:+ $*}"
+            ;;
+        ERR_HINT_UNRESOLVABLE)
+            msg="Could not resolve '$1' to any existing systemd units" ;;
+        ERR_NO_SUPPLIED_SERVICES)
+            msg="No services supplied" ;;
+        *)  msg="$error" ;;
+    esac
+    
+    echo "## ERROR: ${msg:-unknown error}"
+    
+    [ "$HONEST_ERRORLEVELS" ] && exit 1 || exit 0
+}
+
+display_upstart_version() {
+    # many dpkg scripts grep the output of initctl version for whatever reason
+    # so let's provide that, grumble grumble.
+    # also generic noop function to call when we get an unknown verb
+    # takes no arguments, reads no globals
+
+	cat >&2 << _EOF
+[${0##*/}${1:+ $*}]
+I thought what I'd do was, I'd pretend I was one of those upstarts
+_EOF
+    echo "systemd (stop-grepping-me 1.5)"
+}
+
+emit() {
+    # fakes an emit event. takes no argument, reads no globals
+
+    # shift away $1 (emit)
+    shift
+    
+    echo "## Yeah man, I'm totally emitting $* here, whoo! Rock on!" >&2
+    return 0
+}
+
+display_help() {
+    # as the name implies. takes no arguments, reads no globals
+    
+    cat << _EOF
+usage: [initctl] [start|stop|restart|status] UNIT1 [UNIT2] [...]
+
+You should really be using systemctl for this!
+_EOF
+    return 0
+}
+
+display_upstart_list() {
+    # list services in an upstart-like manner that dpkg scripts can grep.
+    # since we're simulating an upstart environment to begin with, we only need
+    # to list those that are actually relevant (eg no systemd-* or duplicates)
+    # moreover this will only list the LSB scripts that systemctl list-units
+    # lists after whatever logic it uses to filter out irrelevancies.
+    # systemctl can't start fully-converted upstart scripts, after all.
+    # takes no arguments, reads no globals
+    
+    local IFS unit load sub _ state pid
+    local ACTIVE="start/running"
+    local INACTIVE="stop/waiting"
+    
+    while read unit load _ sub _; do
+        [ ! "$unit" ] && continue
+        [ "$load" = "error" ] && continue
+        unset state pid
+        
+        case "$sub" in
+            running)
+                state="$INACTIVE"
+                # get pid. systemctl show is much faster than systemctl status
+                pid="$(systemctl show -- "$unit" | grep -m1 '^MainPID=')"
+                [ "$pid" ] && pid="${pid#*=}"
+                ;;
+            exited|failed|dead) state="$INACTIVE" ;;
+            *) state="UNKNOWN_STATE_$sub" ;;
+        esac
+        
+        # strip file extensions
+        unit="${unit%.*}"
+        
+        # substitutions and exceptions. order is important
+        case "$unit" in
+            systemd*|ubuntu-systemd-*)
+                unit="${unit#*systemd-}"
+                case "$unit" in
+                    modules-load)      unit="module-init-tools" ;;
+                    udev-trigger)      unit="udevtrigger" ;;
+                    readahead-collect) unit="ureadahead"  ;;
+                    udev) ;;       # leave as-is to override LSB udev entries
+                    *) continue ;; # probably not something upstart cares about
+                esac
+                ;;
+            getty@*) unit="${unit#getty@}" ;; # getty@tty1 becomes tty1
+            *mount*|udev*|*readahead*|*@*|rmnologin) continue ;;
+            emergency|rescue|debian-fixup|fsck*)     continue ;;
+        esac
+        
+        # print it all!
+        printf "%s %s%s\n" "$unit" "$state" "${pid:+", process $pid"}"
+    done <<< "$(systemctl list-units --all --full --no-legend \
+                --no-pager --type=service)"
+    return 0
+}
+
+assert_verb() {
+    # verify and possibly corrects the global SVERB
+    # exits if it's 'version' or 'usage' or something undefined.
+    # takes no arguments
+    # globals:  VERB, STANDALONE_VERB
+    
+    case "$VERB" in
+        start|stop|restart|status) ;; # do nothing
+        reload|force-reload) VERB=reload-or-restart ;;
+        reload-configuration)
+            VERB=daemon-reload
+            STANDALONE_VERB=1
+            ;;
+        show-config) VERB="show" ;;
+        list)   display_upstart_list
+                exit 0 ;;
+        emit)   emit "$@"
+                exit 0 ;;
+        usage|""|--help|-h)
+                display_help
+                exit 0 ;;
+        *) display_upstart_version "$@"
+                exit 0 ;;
+    esac
+    
+    return 0
+}
+
+index_units() {
+    # parses systemctl list-units output and collects a list of all units
+    # separated by linebreaks. also sed-replaces away some irrelevant entries
+    # extend to include other unit types if use-cases exist
+    # takes no arguments, reads no globals
+    
+    local cmd='s/\.service .*/\.service/g; s/^fsck.*//g; s/.*@.*//g;'
+    local lsb_mark='  LSB: .\+'
+    
+    systemctl list-units --all --full --no-pager --no-legend --type=service \
+        | grep -v "$lsb_mark" | sed "$cmd"
+    systemctl list-units --all --full --no-pager --no-legend --type=service \
+        | grep    "$lsb_mark" | sed "$cmd"
+    
+    return 0
+}
+
+find_systemd_unit() {
+    # resolves a given service name hint to an existing systemd unit by parsing
+    # the list returned by index_units()
+    # globals:  UNIT_INDEX
+    # arg $1:   name hint
+    [ ! $# -gt 0 ] && err ERR_INSUFFICIENT_ARGS find_systemd_unit
+    
+    local IFS pattern service
+    local hint="$1"
+    
+    # index units
+    [ ! "$UNIT_INDEX" ] && UNIT_INDEX="$(index_units)"
+    
+    # various aliases
+    case "$hint" in
+        module-init-tools*)             hint="systemd-modules-load" ;;
+        ureadahead)                     hint="systemd-readahead-collect" ;;
+        networkmanager|network-manager) hint="NetworkManager" ;;
+    esac
+    
+    for pattern in "${hint%.service}" "*systemd-${hint%.service}" \
+                   "*$hint" "${hint}*" "*${hint}*"; do
+        while read service; do
+            [ ! "$service" ] && continue
+            case "${service%.*}" in
+             $pattern)
+                echo "$service"
+                return 0
+                ;;
+            esac
+        done <<< "$UNIT_INDEX"
+    done
+    
+    return 1
+}
+
+iterate_args() {
+    # iterates through supplied args and resolve units/args therein
+    # globals:  ARGS UNITS
+    # args $@:  args passed to script
+    
+    local hint unit
+    
+    while [ $# -gt 0 ]; do
+        [ ! "$1" ] && continue
+        
+        if [ ! "${1##-*}" ]; then
+            # arg is an --option; ignore, except for --help
+            case "$1" in
+                -h|--help)
+                    display_help
+                    exit 0
+                    ;;
+                *)
+                    echo "## ignored '$1'"
+                    shift
+                    continue
+                    ;;
+            esac
+        fi
+        
+        hint="$1"
+        unit="$(find_systemd_unit "$hint")" || err ERR_HINT_UNRESOLVABLE "$hint"
+        echo "## resolved '$hint' to $unit"
+        UNITS="${UNITS:+$UNITS }$unit"
+        
+        shift
+    done
+    
+    return 0
+}
+
+main() {
+    # main function
+    # globals:  as defined below
+    # args $@:  args passed to script upon invocation
+
+    local errorlevel
+
+    # "declare" our "global" variables just to be nice -- not that it does much
+    UNITS=
+    STANDALONE_VERB=
+    VERB=
+    UNIT_INDEX=
+    
+    # verb is basename $0 -- or arg $1 IFF basename $0 is */initctl*
+    VERB="${0##*/}"
+    [ ! "${VERB%initctl*}" ] && { VERB="$1"; shift; }
+    
+    # verify our verb
+    assert_verb "$VERB" "$@"
+    [ ! "$1" ] && [ ! "$STANDALONE_VERB" ] && { display_help; exit 0; }
+    
+    # dance like you want to win
+    iterate_args "$@"
+
+    [ ! "$UNITS" ] && err ERR_NO_SUPPLIED_SERVICES
+    
+    # finally execute systemctl with what we've resolved
+    echo "## [systemctl ${VERB}${UNITS:+ $UNITS}]"
+    echo #padding
+    systemctl $VERB $UNITS
+    errorlevel=$?
+    echo "## [systemctl exit $errorlevel]"
+    
+    [ "$HONEST_ERRORLEVELS" ] && return $errorlevel || return 0
+}
+
+
+## Execution start ############################################################
+
+main "$@"
+errorlevel=$?
+
+[ "$HONEST_ERRORLEVELS" ] && exit $errorlevel || exit 0

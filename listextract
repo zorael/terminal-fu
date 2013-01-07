@@ -1,0 +1,75 @@
+#!/bin/bash
+
+[ $# -eq 0 ] && { echo "you need to specify one or more .deb files" >&2; exit 0; }
+
+unset IFS
+while read filename; do
+	[ ! "$filename" ] && continue
+	debname="${filename%%_*}"
+	debname="${debname##*../}"
+	echo "-- parsing $debname --"
+	while read _ _ _ _ _ thisfile _; do
+		[ ! "$thisfile" ] && continue
+		unset cleanfile origfile i previous thistry maybe sofailed
+		cleanfile="${thisfile#.}"
+		if [ -d "$cleanfile" ]; then
+			[ "$cleanfile" = '/' ] && cleanfile="/."
+			cleanfile="${cleanfile%/}"
+		fi
+		origfile="$cleanfile"
+		echo "$origfile" >&2
+		while [ ! "${cleanfile%%*.so*}" ] && [ ! -d "$cleanfile" ] && [ ! -f "$cleanfile" ]; do
+			sofailed=1
+			let i++
+			case $i in
+				1) ;; # as-is
+				2)
+					libprobe="${origfile/"/lib/"//lib/$(arch)-linux-gnu/}"
+					[ "$libprobe" = "$origfile" ] && continue
+					cleanfile="$libprobe"
+					unset libprobe
+					;;
+				3)
+					#printf "MISSING:  %s\n" "$origfile" >&2
+					unset cleanfile
+					break
+					;;
+			esac
+			echo "trying as: $cleanfile" >&2
+			previous="$cleanfile"
+			unset thistry maybe
+			while [ ! "$previous" = "$thistry" ]; do
+				[ ! "$thistry" ] && thistry="$cleanfile"
+				[ -d "$thistry" ] && { unset cleanfile; break; }
+				while read maybe; do
+					[ ! -f "$maybe" ] && continue
+					cleanfile="$maybe"
+					printf "RESOLVED: %s (was %s)\n\n" "$cleanfile" "${origfile##*/}" >&2
+					unset sofailed
+					break 2
+				done << _EOF
+$(#echo "find \"${thistry%/*}\" -maxdepth 1 -type f -regex \".*${thistry##*/}\..*\"" >&2
+find "${thistry%/*}" -maxdepth 1 -type f -regex ".*${thistry##*/}\..*" 2>/dev/null | sort -rn)
+_EOF
+				previous="$thistry"
+				thistry="${thistry%.*}"
+				[ "${thistry%%*.so*}" ] && { echo "(reached bottom .so layer)" >&2; break; }
+				echo "... ${previous} --> ${thistry##*/}" >&2
+			done
+		done
+		[ "$sofailed" ] && echo "failed to resolve so file ${cleanfile##*/}" >&2
+		#[ ! "$cleanfile" ] && { echo "could not find $origfile" >&2; continue; }
+		echo "${cleanfile:-$origfile}"
+		#[ -f "$cleanfile" ] && md5sum "$cleanfile" >> ${debname}.md5sums
+	done << _EOF | sort -u > "${debname}.list"
+$(dpkg -c $filename)
+_EOF
+	while read thisfile; do
+		[ ! -f "$thisfile" ] || [ ! -r "$thisfile" ] || [ -L "$thisfile" ] && continue
+		md5sum "$thisfile" 2>/dev/null
+	done < "${debname}.list" | sort -u > "${debname}.md5sums"
+	[ $(wc -c < "${debname}.md5sums") -eq 0 ] && rm "${debname}.md5sums"
+done << _EOF
+$(ls -A1 "$@")
+_EOF
+

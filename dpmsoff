@@ -1,0 +1,38 @@
+#!/bin/bash
+
+
+INITDELAY=5
+INTERVAL=60
+WRAP=60
+DATEFORMAT="+%A %D [%H:%M]"
+STATEFILE="/proc/acpi/button/lid/LID/state"
+CHAR_OPEN='O'
+CHAR_CLOSED='C'
+
+
+print_dateline() {
+	printf "\n%s:  " "$(date "$DATEFORMAT")"
+}
+
+run_loop() {
+	local loop
+	while :; do
+		[ ${loop:-$((WRAP+1))} -ge $WRAP ] \
+			&& { unset loop; print_dateline; }
+	    grep -q closed "$STATEFILE" \
+			&& { printf "%s" $CHAR_CLOSED; xset dpms force off; } \
+			|| printf "%s" $CHAR_OPEN
+		let loop++
+		sleep $INTERVAL
+	done
+}
+
+## execution start
+
+trap 'printf "\n";' EXIT
+
+printf "starting loop in %d seconds... " $INITDELAY
+sleep $INITDELAY
+
+printf "\npolling %s every %d seconds\n" "$STATEFILE" $INTERVAL
+run_loop

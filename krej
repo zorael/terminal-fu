@@ -1,0 +1,10 @@
+#!/bin/bash
+
+INITDELAY=1
+FILEBATCHDELAY=0.15
+
+kate & || exit 1
+printf 'kate pid %d\n' $!
+sleep $INITDELAY
+
+find -type f -name \*.rej | while read f; do kate ${f%*.rej} $f; sleep $FILEBATCHDELAY; done

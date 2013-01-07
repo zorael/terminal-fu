@@ -1,0 +1,26 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+	echo "usage: $0 [PATTERN]"
+	exit 0
+fi
+
+probe="$(ps axo command | grep "$*" | grep -v "grep $*" | grep -v "/bin/bash $0 $*")"
+
+if [ "$probe" == "" ]; then
+	echo "no matches for pattern $*"
+	exit 0
+fi
+
+header="USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND"
+matches="$(ps aux | grep "$*" | grep -v "0:00 grep" | grep -v "0:00 /bin/bash $0 $*")"
+
+if [ "$matches" ]; then
+	echo "$header"
+	echo "$matches" | grep --color=auto "$*"
+else
+	echo "match pattern failure!"
+	exit 1
+fi
+
+exit 0

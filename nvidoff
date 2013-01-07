@@ -1,0 +1,7 @@
+#!/bin/sh
+
+lsmod | grep -q acpi_call || { echo "module acpi_call not loaded"; exit 1; }
+
+DEVICE="\_SB.PCI0.PEG0.VID._OFF"
+
+echo "$DEVICE" | sudo tee /proc/acpi/call

@@ -1,0 +1,78 @@
+#!/bin/bash
+
+VERB="${0##*/}"
+[[ $VERB = cpu ]] && { VERB="$1"; shift; }
+
+governor_usage() {
+    printf "usage: %s [governor]\n" "$VERB"
+    governor_print_state
+}
+
+governor_set() {
+    echo "$1" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
+}
+
+governor_current() {
+    # assuming all cores use the same governor
+    cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+}
+
+governor_available() {
+	cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
+}
+
+governor_print_state() {
+	printf "current: %s\n" "$(governor_current)"
+    printf "available governors: %s\n" "$(governor_available)"
+}
+
+governor_parse_args() {
+    case "$1" in
+        ""|print|state) governor_print_state ;;
+        *) governor_set "$@" ;;
+    esac
+}
+
+freq_set() {
+    [[ $# -eq 2 ]] || err BAD_NUM_ARGS freq_set $# 2
+    echo "$2" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_${1}_freq
+}
+
+freq_available() {
+    cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies
+}
+
+freq_parse_args() {
+}
+
+err() {
+    local errcode p
+    errcode="$1"
+    shift 2>/dev/null
+
+    case "$errcode" in
+        INVALID_VERB) p="undefined verb: %s" ;;
+        BAD_NUM_ARGS) p="bad number of args passed to %s (got %d expected %d)" ;;
+        *) p="$errcode" ;;
+    esac
+
+    printf "[%s] ${errcode}\n" "$@"
+    exit 1
+}
+
+main() {
+    case "$VERB" in
+        governor) governor_parse_args "$@" ;;
+        freq)     freq_parse_args "$@" ;;
+        info|"")  info_print_state ;;
+        help|--help|-h) main_usage ;;
+        *) err INVALID_VERB "$VERB" ;;
+    esac
+}
+
+main "$@"
+retcode=$?
+
+printf "exit code: %d\n" $retcode
+
+exit $retcode

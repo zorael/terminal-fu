@@ -1,0 +1,3 @@
+#!/bin/sh
+
+udevadm info --query=all --path="${PWD:-.}" --root --attribute-walk

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ $UID -gt 0 ]; then
+	echo "sudo $0"
+	sudo $0
+	exit $?
+fi
+
+iwlist wlan0 scan

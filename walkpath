@@ -1,0 +1,22 @@
+#!/bin/sh
+
+usage() {
+	cat << _EOF
+usage: ${0##*/} [iregex]
+_EOF
+}
+
+[ ! $# -gt 0 ] && { usage; exit; }
+
+IFS=':'
+for path in $PATH; do
+	[ ! "$path" ] && continue
+	while read file; do
+		[ ! "$file" ] && continue
+		echo "$path/${file#./}"
+	done << _EOF
+$(cd "$path"
+#echo "$path\$ find -maxdepth 1 -name $*" >&2
+find -maxdepth 1 -name "$*")
+_EOF
+done

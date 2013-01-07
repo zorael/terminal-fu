@@ -1,0 +1,38 @@
+#!/bin/bash
+
+DELAY=5
+
+if [ $UID -gt 0 ]; then
+	echo "sudo ${0##*/}"
+	sudo $0
+	errlvl=$?
+	echo "exit $errlvl"
+	exit $errlvl
+fi
+
+getstats() {
+	unset timestamp line free swap
+	timestamp="$(date +%H:%M)"
+	line="$(free -m)"
+	free=$(echo "$line" | awk 'FNR==3 { print $3 }')
+	swap=$(echo "$line" | awk 'FNR==4 { print $3 }')
+	printf "[%s] free: %5d\n        swap: %5d\n" "$timestamp" $free $swap
+}
+
+echo "-- Disabling swap"
+getstats
+
+swapoff -a &
+SWAPOFF_PID=$!
+
+while [ -e /proc/$SWAPOFF_PID ]; do
+	sleep $DELAY
+	getstats
+done
+
+echo #padding
+echo "-- Enabling swap"
+swapon -a
+echo "Done."
+
+exit 0

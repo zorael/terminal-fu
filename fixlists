@@ -1,0 +1,52 @@
+#!/bin/sh
+# fixlists: add missing ending newlines to package list files
+
+LISTDIR=/var/lib/dpkg/info
+
+# create a temporary directory to save backups to
+BACKUPDIR=$(mktemp -d /tmp/listbackups-XXXXXX) || exit 1
+
+# go!
+for listfile in $LISTDIR/*.list; do
+	# print some progress dots as user feedback
+	printf "."
+
+	# if the last line of the list file contains a newline,
+	# just nod in approval and proceed to the next one
+	[ $(tail -n1 $listfile | wc -l) -gt 0 ] && continue
+
+	# non-purged but removed packages may leave behind empty list files,
+	# which would pass the above check (there are no newlines at all).
+	# aptitude purge ~c fixes those, fwiw
+	[ $(wc -c < $listfile) -eq 0 ] && continue
+
+	##########################################################################
+
+	# if we're here we know the file needs fixing
+
+	filename=${listfile##*/}
+	printf "\nmissing newline in %s; backing up to %s/ before appending\n" \
+		"$filename" $BACKUPDIR
+
+	# we do a dry run by default unless explicitly forced
+	if [ ! "$1" = "please" ]; then
+		printf "actually no, you didn't ask very nicely! :(\n"
+		printf "say '%s please' next time\n" "${0##*/}"
+		# to the next file!
+		continue
+	fi
+
+	# backing up first is always a good idea
+	cp -v $listfile $BACKUPDIR/$filename || exit 1
+
+	# 'tee -a' appends. exit on errors as that likely means sudo auth failure
+	printf "\n" | sudo tee -a $listfile 1>/dev/null || exit 1
+done
+
+printf "\n\ndone\n"
+
+# try to remove the backup directory; this will only work if it's empty.
+# if it has contents (saved backups) nothing happens. rmdir just works like that.
+rmdir --ignore-fail-on-non-empty $BACKUPDIR
+
+exit 0

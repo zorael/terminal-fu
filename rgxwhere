@@ -1,0 +1,17 @@
+#!/bin/sh
+
+if [ ! $# -gt 0 ]; then
+	cat 2>/dev/null << _EOF
+usage: ${0##/*} [IREGEX]
+
+mind that regex-type is emacs' (via find)
+_EOF
+	exit 0
+fi
+
+IFS=':'
+for path in $PATH; do
+	find $path -maxdepth 1 -iregex "$*" || exit 1
+done
+
+exit 0

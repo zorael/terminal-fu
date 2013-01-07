@@ -1,0 +1,45 @@
+#!/bin/bash
+
+if [ $UID -gt 0 ]; then
+  echo "sudo $0"
+  sudo $0 $*
+  exit $?
+fi
+
+share=$1
+target=$2
+
+[ ! "$target" ] && target="."				# should always be a target
+
+if [ "$share" ]; then
+  echo $share
+  [ "$(echo "$share" | cut -c1-4)" == "smb:" ] && share="$(echo "$share" | cut -c1-4 --complement)"
+  echo $share
+  while [ "$(echo "$share" | cut -c1)" == "\\" ]; do share="$(echo "$share" | cut -c1 --complement)"; done
+  echo $share
+  [ ! "$(echo "$share" | cut -c1-2)" == "//" ] && share="//$share"
+  echo $share
+fi
+
+if [ ! "$share" ] || [ "$share" == "//" ]; then
+  echo "no samba share supplied!"
+  exit 1
+fi
+
+if [ ! -w "$target" ]; then
+  echo "you do not have rw permissions for target directory $target"
+  exit 1
+fi
+
+[ "$GUEST" ] && user="guest" || user="user=$USER"	# call like GUEST=1 $0
+
+
+#-- mount!
+
+echo mount.cifs --verbose "$share" "$target" -o $user,nounix,noserverino,noperm,sec=ntlmssp $3 $4 $5 $6 $7 $8 $9
+mount.cifs --verbose "$share" "$target" -o $user,nounix,noserverino,noperm,sec=ntlmssp $3 $4 $5 $6 $7 $8 $9
+err=$?
+
+echo "exit $err"
+exit $err
+

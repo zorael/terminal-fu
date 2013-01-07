@@ -1,0 +1,237 @@
+#!/bin/sh
+# updatehosts: fetch someonewhocares.org hosts file and append to our own
+
+
+## Settings ###################################################################
+HOSTS="${1:-/etc/hosts}"
+EXCLUDE='rover.ebay.com'  # separate multiple entries with colons
+HOSTS_URL='http://someonewhocares.org/hosts/zero/hosts'  ## hosts -> 0.0.0.0
+#HOSTS_URL='http://someonewhocares.org/hosts/hosts'      ## hosts -> 127.0.0.1
+
+
+## Internals; here be dragons #################################################
+DELIM='## END STATIC HOSTS ##'
+SED_COMMENT_HOST='s/^\(127\.0\.0\.1\|0\.0\.0\.0\) %s$/#\\0 # excluded/g'
+SED_REMOVE_LOCAL='/^#<localhost>$/,/^#<\/localhost>$/d'
+SED_SCRUB_HOSTS='/^%s$/,$d'
+KEEP_EXTERNAL_LOCALHOST=
+TMP_PRIMARY=
+TMP_SECONDARY=
+TMP_SED=
+STEP=
+
+
+## Functions ##################################################################
+
+err() {
+    local pattern msg
+    
+    case "$1" in
+	WRITE_TO_FILE)    msg="Failed to write to file: %s"              ;;
+	DOWNLOAD)         msg="Failed to download URL: %s"               ;;
+	EXCLUDE)          msg="Failed to comment hosts for exclusion"    ;;
+	GET_NUM_ENTRIES)  msg="Failed to parse number of entries in %s"  ;;
+	TIMESTAMP)        msg="Failed to timestamp hosts file (%s)"      ;;
+	VERIFY_CONSTANTS) msg="Malconfigured script; please edit %s"     ;;
+	WRITE_TO_TMP)     msg="Failed to create temporary files in /tmp" ;;
+	APPEND_TO_FILE)   msg="Failed to append to file (%s >> %s)"      ;;
+	"")               msg="undefined!" ;;
+	*)                msg="$1"         ;;
+    esac
+    shift 2>/dev/null
+    
+    printf "\n[!] ERROR: $msg\n" "$@" 1>&2
+    
+    exit 1
+}
+
+
+clean_up() {
+    rm -f "$TMP_PRIMARY" "$TMP_SECONDARY" "$TMP_SED"
+}
+
+step() {
+	STEP=$((${STEP:-0}+1))
+	local pattern="$1"
+	shift 2>/dev/null
+	
+	printf "\n[%d] $pattern " $STEP "$@"
+}
+
+
+scrub_old() {
+    local regex
+    step "Scrubbing hosts file of old additions"
+    
+    # prepare regex by inserting the delimeter into it
+    regex="$(printf "$SED_SCRUB_HOSTS" "$DELIM")"
+    
+    #echo "sed \"$regex\" $TMP_SECONDARY" >&2
+    sed_i "$regex" "$TMP_SECONDARY" || err WRITE_TO_FILE "$TMP_SECONDARY"
+    
+    # restore delim until we figure out a better sed command
+    grep -q -- "$DELIM" "$TMP_SECONDARY" || echo "$DELIM" >> "$TMP_SECONDARY"
+}
+
+
+sed_i() {
+    # sed -i is supposedly not portable so let's reinvent it
+    local expression="$1"
+    local file="$2"
+    
+    sed "$expression" "$file" > "$TMP_SED" || return 1
+    cp -f "$TMP_SED" "$file"
+    
+    return $?
+}
+
+
+download_hosts() {
+    local num_excluded num_hosts
+    step "Downloading external hosts file"
+    
+    wget -qt3 -O "$TMP_PRIMARY" "$HOSTS_URL" || err DOWNLOAD "$HOSTS_URL"
+    
+    # remove localhost section in it unless KEEP_EXTERNAL_LOCALHOST is set
+    [ ! "$KEEP_EXTERNAL_LOCALHOST" ] && sed_i "$SED_REMOVE_LOCAL" "$TMP_PRIMARY"
+    
+    # comment our exclusions and catch returned count
+    num_excluded=$(exclude "$TMP_PRIMARY") || err EXCLUDE
+    
+    # count number of uncommented lines in our temp file
+    num_hosts=$(get_num_entries "$TMP_PRIMARY") || err GET_NUM_ENTRIES
+    
+    printf "\n... %d host definitions loaded%s" \
+	$num_hosts "${num_excluded:+" ($num_excluded commented out")}"
+}
+
+
+append() {
+    #STEP=$((STEP+1))
+    #printf "[%d] Adding loaded hosts\n" $STEP
+    step "Adding loaded hosts"
+    
+    cat "$TMP_PRIMARY" >> "$TMP_SECONDARY" || \
+	err APPEND_TO_FILE "$TMP_PRIMARY" "$TMP_SECONDARY"
+}
+
+
+get_num_entries() {
+	local file
+    file="${1:-"$TMP_PRIMARY"}"
+    cat "$file" | grep -v '^[ \t]*#\|^$' | wc -l
+    return $?
+}
+
+
+timestamp() {
+    cat >> "$TMP_SECONDARY" << _EOF
+
+# [${0##*/}] external hosts file as below added on $(date)
+
+_EOF
+    [ $? -gt 0 ] && err TIMESTAMP "$TMP_SECONDARY"
+}
+
+
+exclude() {
+    [ ! "$EXCLUDE" ] && return 0
+    local host regex before after delta
+    local file="$1"
+    local commented=0
+    local IFS=':'
+    
+    for host in $EXCLUDE; do
+		unset regex before after delta
+		regex="$(printf -- "$SED_COMMENT_HOST" "$host")"
+		
+		before=$(get_num_entries "$file")
+		sed_i "$regex" "$file" || return 1
+		after=$(get_num_entries "$file")
+		
+		delta=$((before-$after))
+		commented=$((commented+$delta))
+    done
+    
+    [ $commented -gt 0 ] && echo $commented
+    return 0
+}
+
+
+sanity_check() {
+    # constants set?
+    ([ "$HOSTS" ]     && [ "$SED_COMMENT_HOST" ]  && \
+     [ "$DELIM" ]     && [ "$SED_REMOVE_LOCAL" ]  && \
+     [ "$HOSTS_URL" ] && [ "$SED_SCRUB_HOSTS"  ] ) || err VERIFY_CONSTANTS "$0"
+    
+    # does the hosts file exist to begin with. if not, have our downloaded list
+    # retain its basic localhost entries (127.0.0.1 etc)
+    [ ! -e "$HOSTS" ] && KEEP_EXTERNAL_LOCALHOST=1
+    
+    # delimeter present in hosts? else append
+    grep -q -- "$DELIM" "$TMP_SECONDARY" || echo "$DELIM" >> "$TMP_SECONDARY"
+    
+    return 0
+}
+
+
+create_temp() {
+	step "Creating working copy of %s along with temporary files" "$HOSTS"
+	
+    TMP_PRIMARY="$(  mktemp /tmp/hosts.primary.XXXXXX)" || err WRITE_TO_TMP
+    TMP_SECONDARY="$(mktemp /tmp/hosts.secondary.XXXXXX)"
+    TMP_SED="$(      mktemp /tmp/hosts.sed.XXXXXX)"
+    [ -e "$HOSTS" ] && cp "$HOSTS" "$TMP_SECONDARY"
+    
+    return $?
+}
+
+
+commit() {
+	step "Committing all changes to %s (may need root)" "$HOSTS"
+    
+    cp -f "$TMP_SECONDARY" "$HOSTS" 2>/dev/null && return 0
+    
+    # if we're still here we failed, so try sudo and then su -c
+    printf "\n... failed; retrying with sudo\n"
+    sudo cp -f "$TMP_SECONDARY" "$HOSTS" 2>/dev/null && return 0
+    
+    printf "\n... failed; retrying with su -c\n"
+    su -c "cp -f "$TMP_SECONDARY" "$HOSTS"" 2>/dev/null && return 0
+    
+    err WRITE_TO_FILE "$HOSTS"
+}
+
+
+finish_with_flair() {
+    #STEP=$((STEP+1))
+    #printf "[%d] All done, no errors\n" $STEP
+    step "All done, no errors\n"
+    return 0
+}
+
+
+main() {
+    trap 'clean_up' EXIT
+    
+    create_temp
+    sanity_check
+    
+    download_hosts
+    scrub_old
+    timestamp
+    append
+    commit
+    
+    finish_with_flair
+    return $?
+}
+
+
+## Execution start ############################################################
+
+echo "hello gooby" | sed "s:gooby:/g/:"
+#echo #padding like a boss
+
+main
+exit $?

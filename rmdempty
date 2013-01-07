@@ -1,0 +1,20 @@
+#!/bin/bash
+
+delta=
+removed=
+pass=
+IFS=$'\n'
+
+while [ ${delta:-1} -gt 0 ]; do
+	delta=0
+	for dir in $(find -type d); do
+		[ $(ls -A1 "$dir" 2>&1 | wc -l) -gt 0 ] && continue
+		[ "$1" = '-f' ] && rmdir -v "$dir" || echo "rmdir -v \"$dir\""
+		removed=$((removed+1))
+		delta=$((delta+1))
+	done
+	[ "$1" = '-f' ] || break
+	[ $delta -gt 0 ] && pass=$((pass+1))
+done
+
+printf "%d directories removed. (%d passes)\n" ${removed:-0} $pass

@@ -1,0 +1,90 @@
+#!/bin/bash
+# concurrent hashing of all installed packages
+
+BASENAME="${0##*/}"
+DATEFORMAT="%T (%x)"
+LOGDIR="$(mktemp -d /tmp/${BASENAME}.XXXXXX)"
+SUMMARY="/tmp/${BASENAME}.log"
+WORKERS=8
+RESPITE=0.15
+STRING_RUNNING="Running"
+
+cleanup() {
+	trap - EXIT
+	[[ "$1" != EXIT ]] && { printf ' [caught %s] ' $1; summary; }
+	rm -r "$LOGDIR"
+	exit 1
+}
+
+waitforjobs() {
+	local nagged
+	while [[ $(jobs | grep -c $STRING_RUNNING) -gt 0 ]]; do
+		[[ ! $nagged ]] && printf '\n\n[waiting for jobs to finish] '
+		nagged=1
+		sleep $RESPITE
+	done
+}
+
+hashpackage() {
+	local output="$(debsums -ac --no-prelink $1 2>&1)"
+	[[ "$output" ]] || { printf '.'; return; }
+	echo "$output" >${LOGDIR}/$1 2>/dev/null || return 1
+	printf '+'
+}
+
+summary() {
+	local IFS package cause
+	waitforjobs
+	
+	echo #padding
+	printf '\n[%s] finished hashing packages at %s\n\n' "$BASENAME" \
+		"$(timestamp)" | tee -a "$SUMMARY"
+
+	IFS=$'\n'
+	for package in $LOGDIR/*; do
+		[ ! -r "$package" ] && continue
+		printf -- '-- %s:\n' ${package##*/}
+		printf -- '\t%s\n' $(cat $package)
+		echo #padding
+	done | tee -a "$SUMMARY"
+
+	printf '\nsummary also saved to: %s\n' "$SUMMARY"
+}
+
+start_loop() {
+	local IFS packages i
+	packages=( "$@" )
+	for package in ${packages[*]}; do
+		while [[ $(jobs | grep -c $STRING_RUNNING) -ge $WORKERS ]]; do
+			printf 'S'
+			sleep $RESPITE
+		done
+		hashpackage $package &
+		i=$((i+1))
+		[[ $((i%100)) = 0 ]] && printf '[%d]' $i
+	done
+}
+
+timestamp() {
+	echo "$(date +"$DATEFORMAT")"
+}
+
+main() {
+	for signal in EXIT SIGINT SIGTERM SIGHUP; do
+		trap "cleanup $signal" $signal
+	done
+	local PACKAGES="$(dpkg -l | grep '^ii' | awk '{ print $2 }' | grep -v -- '-\(dbg\|debug\)$')"
+
+	rm -f "$SUMMARY"
+	touch "$SUMMARY"
+	
+	printf '[%s] started at %s (%d packages to hash)\n' \
+		"$BASENAME" "$(timestamp)" $(printf "$PACKAGES" | wc -l) | tee -a "$SUMMARY"
+	start_loop "$PACKAGES"
+	
+	summary
+	return 0
+}
+
+main
+exit $?

@@ -1,0 +1,31 @@
+#!/bin/bash
+
+VERB="${0##*/}"
+CMD=
+NEEDFORK=
+
+_err() {
+	local msg
+	case "$1" in
+		CALLEDRAW) msg='this file should be called as symlinks to it' ;;
+		NOSUCHCMD) msg='could not resolve the command "%s"; is it installed?' ;;
+		*) msg="$1"
+	esac
+	shift 2>/dev/null
+	printf '[error]: $msg\n' "$@"
+	exit 1
+}
+
+case "$VERB" in
+	whicher) _err CALLEDRAW ;;
+	nwhich) CMD=nano ;;
+	fwhich) CMD=file ;;
+	kwhich)
+		CMD=kate
+		FORK=1
+		;;
+esac
+
+which "$CMD" &>/dev/null || _err NOSUCHCMD "$CMD"
+FILE="$(which "$@")" || exit 1
+[[ $FORK ]] && { $CMD "$@" & } || $CMD "$@"

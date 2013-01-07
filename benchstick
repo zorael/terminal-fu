@@ -1,0 +1,89 @@
+#!/bin/bash
+
+IN="${2:-/dev/zero}"
+OUT="${1:-./derp}"
+OUT_UID=1000
+OUT_GID=1000
+ARGS_COMMON="bs=10M count=30"
+ARGS_WRITE="oflag=sync,nocache,nonblock conv=fdatasync"
+ARGS_READ=" iflag=sync,nocache,nonblock"
+
+
+if [ $UID -gt 0 ]; then
+	#echo "sudo ${0##*/} $*"
+	sudo $0 "$@"
+	errlvl=$?
+	#echo "exit $errlvl"
+	exit $errlvl
+fi
+
+err() {
+	printf "\nerror: %s\n" "${1:-undefined}"
+	exit 1
+}
+
+drop_caches() {
+    # 1 to free pagecache
+    # 2 to free dentries and inodes
+    # 3 to free pagecache, dentries and inodes
+    echo 1 > /proc/sys/vm/drop_caches || err "drop_caches() echo 1 > /proc"
+}
+
+prepare_files() {
+    [ -r "$IN" ] || return 1
+	[ -e "$OUT" ] && { rm -i "$OUT" || return 1; }
+	touch "$OUT" || return 1
+	chown $OUT_UID:$OUT_GID "$OUT" || return 1
+	sync || return 1
+	return 0
+}
+
+dd_write() {
+	drop_caches || return 1
+	printf " write\t"
+	#dd if="$IN" of="$OUT" $ARGS_COMMON $ARGS_WRITE 2>&1 | grep -v records || return 1
+	dd_go "$IN" "$OUT" "$ARGS_WRITE" || return 1
+	sync
+	return 0
+}
+
+dd_read() {
+	drop_caches || return 1
+	printf "  read\t"
+	#dd if=derp of=/dev/null $COMMON $ARGS_READ 2>&1 | grep -v records || return 1
+	dd_go "$OUT" "$IN" "$ARGS_READ" || return 1
+	sync
+	return 0
+}
+
+dd_go() {
+	[ $# -lt 3 ] && return 1
+	sync
+	nice -n -10 ionice -c2 -n7 dd if="$1" of="$2" $ARGS_COMMON $3 2>&1 | \
+            grep -v records || return 1
+	return 0
+}
+
+clean_up() {
+        rm -v "$OUT" || err clean_up
+	#[ -e "$OUT" ] && { rm "$OUT" || err clean_up; }
+	exit 0
+}
+
+main() {
+	trap 'clean_up' EXIT
+
+	#echo #padding
+	printf " input\t${IN}\n"
+	printf "output\t${OUT##./}\n"
+
+	for cmd in prepare_files dd_write dd_read sync; do
+		$cmd || err $cmd
+	done
+
+	return 0
+}
+
+main
+
+exit $?

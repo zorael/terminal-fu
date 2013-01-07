@@ -1,0 +1,26 @@
+#!/bin/sh
+[ ! $1 ] && { echo "usage: ${0##*/} [SIGNAL]"; exit 0; }
+
+SIGNAL=$1
+GREP="$(which grep)"
+PSFUX="$(ps fux)"
+HEADER="$(echo "$PSFUX" | head -1)"
+PIDS=
+REGEX="/usr/lib/chromium-browser/chromium-browser|\[chromium-browse\]"
+
+# $(ps aux | grep /usr/lib/chromium | grep -v grep | awk '{ print $2 }') ...
+
+
+getpids() {
+	PIDS="$(ps xo pid,command | $GREP -v $GREP | $GREP -E "$*" | awk '{ print $1 }')"
+	[ "$PIDS" ] && return 0 || return 1
+}
+
+
+getpids "$REGEX" || { echo "No processes found"; exit 1; }
+numpids=$(echo "$PIDS" | wc -w)
+
+printf "Sending signal '%s' to %d processes...\n" $SIGNAL $numpids
+kill -s $SIGNAL $PIDS
+
+exit $?

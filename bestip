@@ -1,0 +1,30 @@
+#!/bin/bash
+
+URL="${@:-http://wiki.opennicproject.org/Tier2}"
+PATTERN_IP='s/<td>\(\([0-9]\{1,3\}\.\)\{3\}[0-9]\{1,3\}\)<\/td>/\1/gp'
+PATTERN_PING='s/rtt min\/avg\/max\/mdev = \(.\+\)\/\(.\+\)\/\(.\+\)\/.\+ ms/\1 \2 \3/gp'
+PACKETS=3
+unset IFS
+
+IPS=( $(curl -Ls --retry 3  "$URL" | sed -n "$PATTERN_IP") ) || exit
+
+printf "pinging %d ips...\n" ${#IPS[@]}
+
+i=0
+for ip in ${IPS[@]}; do
+	unset min avg max
+	i=$((i+1))
+	printf " %-20s" "$ip"
+	read min avg max <<< $(ping -qnc $PACKETS $ip | sed -n "$PATTERN_PING")
+	[[ ! $min ]] && { dead=$((dead+1)); printf 'no response\n'; continue; }
+	printf "%-8.2f  (%-6.2f - %.2f)" $avg $min $max
+	if [[ $(echo "$min <= ${best:-$min}" | bc) -eq 1 ]]; then
+		best=$min
+		best_ip=$ip
+		[[ $i -gt 1 ]] && printf '   [best]'
+	fi
+	printf '\n'
+done
+
+printf "%d ips pinged (%d dead)\n" $((${#IPS[@]}-$dead)) $dead
+printf "best was %s with average %.2f ms response time\n" $best_ip $best

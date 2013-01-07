@@ -1,0 +1,75 @@
+#!/bin/bash
+
+ROOT="${1:-"http://data.gpo.zugaina.org/ROKO__/sys-kernel/geek-sources/files/3.7.1"}"
+IFS=$'\n'
+
+_err() {
+	#printf -- "error: %s\n" "$@"
+	echo "error: $@"
+	exit 1
+}
+
+parse_index() {
+	[[ $# -eq 1 ]] || exit 1
+	local everything="$(curl -s "$1" | grep '^<img' | sed 's|.*href="\(.\+\)">.*|\1|g')" || exit 1
+	# print non-directories first to catch series files earlier
+	echo "$everything" | grep -v '/$'
+	echo "$everything" | grep '/$' || true
+}
+
+parse_patch_list() {
+	[[ $# -eq 1 ]] || exit 1
+	curl -s "$1" | grep -v '^$\|^#\|^;' | sed 's|^\([^#]\+\)#.*$|\1|g'
+}
+
+get_file() {
+	[[ $# -eq 2 ]] || _err NUMARG get_file 2 $#
+	local branch leaf path
+	#branch="$1"
+	#leaf="$2"
+	path="$1/$2"
+	[[ -f "$path" ]] && { printf -- '(skipping %s)\n' "$path"; return; }
+	mkdir -p "${path%/*}" || _err PERMS "./${path%/*}"
+	printf -- '-> %s\n' "$path"
+	curl -s "$ROOT/$path" -o "$path" || exit 1
+}
+
+get_series() {
+	[[ $# -eq 2 ]] || _err NUMARG get_series 2 $#
+	local branch leaf list entry
+	branch="$1"
+	leaf="$2"
+	printf -- '\nFound patch series at %s/%s.\n' "$branch" "$leaf"
+	list=( $(parse_patch_list "$ROOT/$branch/$leaf") )
+	mkdir -p "$branch" || _err PERMS "./$branch"
+	echo "${list[*]}" > "$branch/$leaf"
+	printf -- '%d patches in list\n' ${#list[@]}
+	for entry in ${list[@]}; do
+		get_file "$branch" "$entry"
+	done
+}
+
+traverse() {
+	[[ $# -eq 1 ]] || _err NUMARGS traverse 1 $#
+	local branch leaf list
+	branch="$1"
+	printf -- 'Entering %s ...\n' "$branch"
+	list=( $(parse_index "$ROOT/$branch/") ) || _err BADEXIT parse_index "$branch"
+	for leaf in ${list[@]}; do
+		case "$leaf" in
+			*/) traverse "$branch/${leaf%/}" ;;
+			patch_list|series)
+				get_series "$branch" "$leaf"
+				break
+				;;
+			*) ;; #skip
+		esac
+	done
+}
+
+main() {
+	traverse '.'
+}
+
+main
+exit $?

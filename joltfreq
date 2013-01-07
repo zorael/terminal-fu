@@ -1,0 +1,18 @@
+#!/bin/bash
+
+CPUDIR="/sys/devices/system/cpu"
+FREQDIR="${CPUDIR}/cpu0/cpufreq"
+FREQS=( $(cat ${FREQDIR}/scaling_available_frequencies) )
+
+i=$((${#FREQS[@]}-1))
+[ "$1" = -r ] || i=$((i-1))
+
+echo "echo ${FREQS[0]} | sudo tee ${CPUDIR}/cpu*/cpufreq/scaling_max_freq"
+echo ${FREQS[0]} | sudo tee ${CPUDIR}/cpu*/cpufreq/scaling_max_freq
+
+echo "echo ${FREQS[$i]} | sudo tee ${FREQDIR}/scaling_min_freq"
+echo ${FREQS[$i]} | sudo tee ${FREQDIR}/scaling_min_freq
+
+
+echo "exit $?"
+

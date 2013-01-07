@@ -1,0 +1,11 @@
+#!/bin/bash
+
+#list="$(ps aux --no-header --cols 200 | awk '$11!~/\[*\]/ { print $6/1024" Mb --> "$11,$12,$13,$14,$15,$16,$17,$18,$19,$20 }' | sort -g)"
+list="$(ps axo pid,rss,cmd --no-header --cols ${COLUMNS:-166} | awk '{ print $2/1024,"Mb --> ["$1"]",$3,$4,$5,$6,$7,$8,$9,$10,$11,$12 }' | sort -g)"
+
+IFS=$'\n'
+for line in $list; do
+	echo "$line"
+done
+
+

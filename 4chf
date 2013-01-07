@@ -1,0 +1,91 @@
+#!/bin/sh
+
+
+# defaults and settings
+TITLE="Daily Programming Thread"	# we case-insensitive now! regex matching, so a . will grab all *titled* threads
+BOARD="g"
+LASTPAGE=10
+FUZZINESS=30				# number of surrounding characters for substring matching. 0 or comment to disable
+MULTIPLE_MATCHES=1			# comment to make script stop upon finding a thread, leave uncommented to let it continue until $LASTPAGE
+SILENTLY_FAIL=1				# just exit silently when a page cannot be fetched, comment or leave as is
+
+
+# overrides from passed args, make into proper --options
+[ "$1" ] && TITLE="$1"
+[ "$2" ] && BOARD="$2"
+[ "$3" ] && LASTPAGE=$3
+[ "$4" ] && FUZZINESS=$4
+
+
+# internals
+BASE_URL="http://boards.4chan.org/$BOARD"
+FORMAT_THREAD_LIST="(%02d) %-40s %s"					# number of match, url, title
+FORMAT_PAGE_COUNTER="%d.."						# without ending linebreak. page number
+PATTERN_EXPR_THREADNUM=".*name=\"\([0-9]\{4,10\}\)\".*"			# hardcoded 4-10 digits in a thread number
+PATTERN_EXPR_TITLE=".*class=\"filetitle\">\(.\{1,128\}\)</span>"
+PATTERN_GREP_HEADER="value=delete><span class=\"filetitle\">.\{0,${FUZZINESS:-0}\}${TITLE}.\{0,${FUZZINESS:-0}\}</span>"
+
+
+get() {
+    local url="$1"
+    [ "$url" ] && wget -qt3 -O- "$url"
+    #[ "$url" ] && curl -sL --retry 3 --retry-delay 3 "$url"
+}
+
+
+parse() {
+    local header="$1"
+    local threadnum="$(expr "$header" : "$PATTERN_EXPR_THREADNUM")"
+    local title="$(expr "$header" : "$PATTERN_EXPR_TITLE")"
+    [ "$threadnum" ] && echo "${threadnum} ${title}"
+}
+
+
+err() {
+    echo #padding
+    [ ! "$SILENTLY_FAIL" ] && echo "Error: $*"
+    exit 1 #0?
+}
+
+
+# ------- execution start
+
+
+printf "Searching up to page %d of /%s/ for \"%s\" with a fuzziness of %d\n" $LASTPAGE $BOARD "$TITLE" ${FUZZINESS:-0}
+needtopad=""
+i=0		# match counter
+n=0		# page counter
+
+for num in $(seq 0 $LASTPAGE); do
+#for num in $(seq $LASTPAGE -1 0); do
+    n=$num
+    unset page headers parsed thread title
+    printf "$FORMAT_PAGE_COUNTER" $num
+    needtopad=1 # because no endline \n in counter printf string
+
+    page="$(get "${BASE_URL}/$num")"
+    [ ! "$page" ] && err "Could not fetch page $num of /${BOARD}/"
+
+    headers="$(echo "$page" | grep -ie "$PATTERN_GREP_HEADER")"
+    [ ! "$headers" ] && continue
+
+    echo #padding
+    unset needtopad
+
+    while read REPLY; do
+	parsed="$(parse "$REPLY")"
+	thread="$(echo "$parsed" | cut -d" " -f1)"
+	title="$(echo "$parsed" | cut -d" " -f1 --complement)"
+	i=$((i+1))
+	printf "${FORMAT_THREAD_LIST}\n" $i "${BASE_URL}/res/${thread}" "$title"
+	[ ! "$MULTIPLE_MATCHES" ] && break 2
+    done << EOL
+$headers
+EOL
+done
+
+[ "$needtopad" ] && echo #padding
+echo "$i match(es) in $((n+1)) pages."
+
+
+exit 0
