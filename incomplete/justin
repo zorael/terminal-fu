@@ -1,0 +1,29 @@
+#!/bin/bash
+API_KEY="live_*****************"
+FPS="15"
+
+INRES='1280x1024'
+OUTRES='1280x1024'
+
+ffmpeg -f x11grab -s "$INRES" -r "$FPS" -i :0.0+1280 \
+       -f alsa -i pulse -vcodec libx264  -s "$OUTRES"  \
+       -acodec libmp3lame -ab 64k -ar 22050 -threads 0 \
+       -pix_fmt yuv420p -f flv \
+        "rtmp://live.justin.tv/app/$API_KEY"
+
+# The solution came from a member of FFmpeg development group.
+# Since the video itself is fine when it's examined locally,
+# there must be some trouble with some of the formats.
+# Actually it was all about pixel format.
+
+# If we capture the screen locally with the output option
+# set as -f flv out.flv, the later examining of the video
+# with ffprobe out.flv would show that the pixel format is 444,
+# and it's not yet widely supported. Hence, it's necessary
+# to add -pix_fmt yuv420p in the encoder properties to get
+# your video playable by justin, twitch, own3d, ustream and
+# other rtmp services.
+
+# other links
+# http://michaelchinen.com/2011/06/27/justin-tv-streaming-in-linux/
+

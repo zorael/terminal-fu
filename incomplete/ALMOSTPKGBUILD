@@ -1,0 +1,196 @@
+#!/bin/bash
+
+if [ $UID -gt 0 ]; then
+    echo "sudo ${0##*/}"
+    sudo $0 "$@"
+    errlevel=$?
+    echo "exit $errlevel"
+    exit $errlevel
+fi
+
+DEFAULT_CONCURRENCY=8
+
+usage() {
+	cat << _EOF
+usage: ${0##*/} [--skipupdate] [package to build]
+_EOF
+}
+
+err() {
+    local errspec msg
+    errspec="$1"
+    case "$errspec" in
+        COMMAND_ERROR) msg="%s threw errorlevel %d" ;;
+		INSUFFICIENT_ARGS) msg="insufficient args sent to %s()" ;;
+		NO_SUCH_PACKAGE) msg="invalid package: %s" ;;
+		SCRIPT_SYNTAX)
+			usage
+			exit 1
+			;;
+        *) msg="$errspec"
+    esac
+    printf -- "ERROR: $msg\n" "$@"
+    exit ${2:-1}
+}
+
+getchar() {
+	[ ! $# -gt 1 ] && err INSUFFICIENT_ARGS getchar
+	local prompt optlist char IFS i
+	prompt="$1"
+	shift
+	for char in "$@"; do
+		[ ! "$char" ] && continue
+		optlist="${optlist:+$optlist/}$char"
+	done
+	read -n1 -p "$prompt [$optlist] "
+	[ ! "$REPLY" ] && return 0
+	i=0
+	for char in "$@"; do
+		[ ! "$char" ] && continue
+		i=$((i+1))
+		[ "${REPLY,,}" = "${char,,}" ] && return $i
+	done
+	return 255
+}
+
+getline() {
+	[ ! $# -gt 0 ] && err INSUFFICIENT_ARGS getline
+	local prompt
+	prompt="$1"
+	unset REPLY
+	read -p "$prompt "
+	printf "\n"
+	export REPLY
+	return 0
+}
+
+verifybuildflags() {
+	local flagvar savedflag IFS
+	printf -- "\n-- Build flags --\n"
+	for flagvar in CFLAGS CXXFLAGS CPPFLAGS DFLAGS FFLAGS LDFLAGS; do
+		unset flags
+		flags="$(eval "echo \"\$$flagvar\"")"
+		if [ ! "$flags" ]; then
+			flags="$(grep "^${flagvar}=" PKGBUILD.flags 2>/dev/null)"
+			flags="${flags##${flagvar}=}"
+			eval "export ${flagvar}=\"$flags\""
+		fi
+		printf "%-20s%s\n" "$flagvar" "${flags:-(empty)}"
+	done
+	printf "\n"
+	getchar "Happy with that?" Y n
+	errno=$?
+	printf "\n"
+	echo "returned: $errno"
+	case $errno in
+		0|1) return 0 ;; # Y
+		2) # n
+			printf "All righty.\n"
+			exit 0
+			;;
+		*)
+			printf "... What?\n"
+			exit 1
+			;;
+	esac
+}
+
+verifyconfflags() {
+	local confflags
+	#clear
+	./configure --help
+
+	confflags="$(grep "^CONFIGUREFLAGS=" PKGBUILD.flags 2>/dev/null)"
+	confflags="${confflags##CONFIGUREFLAGS=}"
+	printf -- "\n-- Configure flags (read from PKGBUILD.flags) --\n"
+	printf "%s\n\n" "${confflags:-(none)}"
+	getchar "Happy with that, append more, override or exit?" y h a o e
+	errno=$?
+	printf "\n"
+	case $errno in
+		0|1|2) return 0;; # y|h
+		3) # a
+			getline "Enter additional flags:"
+			CONFIGURE_FLAGS="${CONFIGURE_FLAGS:+$CONFIGURE_FLAGS }$REPLY"
+			;;
+		4) # o
+			getline "Enter new flags:"
+			CONFIGURE_FLAGS="$REPLY"
+			;;
+		5) # e
+			printf "All righty.\n"
+			exit 0
+			;;
+		*) # invalid
+			printf "... What?"
+			exit 1
+			;;
+	esac
+}
+
+verifymakeflags() {
+	local makeflags moreflags
+	makeflags="$(grep "^MAKE_FLAGS=" PKGBUILD.flags 2>/dev/null)"
+	makeflags="${makeflags##MAKE_FLAGS=}"
+	printf -- "\n-- Make flags (read from PKGBUILD.flags) --\n"
+	printf "%s\n" "${confflags:-(none, but adding -j$DEFAULT_CONCURRENCY)}"
+	getchar "Happy with that, append more, override or exit?" y h a o e
+	errno=$?
+	printf "\n"
+	case $errno in
+		0|1|2) return 0;; # y|h
+		3) # a
+			getline "Enter additional flags:"
+			MAKE_FLAGS="${MAKE_FLAGS:+$MAKE_FLAGS }$REPLY"
+			;;
+		4) # o
+			getline "Enter new flags:"
+			MAKE_FLAGS="$REPLY"
+			;;
+		5) # e
+			printf "All righty.\n"
+			exit 0
+			;;
+		*) # invalid
+			printf "... What?"
+			exit 1
+			;;
+	esac
+}
+
+
+## execution start
+
+SKIP_UPDATE=
+CONFIGURE_FLAGS=
+MAKE_FLAGS=
+
+case "$1" in
+	"") err SCRIPT_SYNTAX ;;
+	--skipupdate)
+		SKIP_UPDATE=1
+		shift
+		;;
+	-*)
+		usage
+		exit 0
+		;;
+esac
+
+[ ! "$SKIP_UPDATE" ] && apt-get update
+
+package="$1"
+
+# apt-get build-dep $package || err COMMAND_ERROR "apt-get build-dep"
+# ./configure $CONFIGURE_FLAGS || err COMMAND_ERROR "./configure"
+# make $MAKE_FLAGS || err COMMAND_ERROR "make"
+apt-cache policy "$package" >/dev/null || err NO_SUCH_PACKAGE "$package"
+
+verifybuildflags
+verifyconfflags
+verifymakeflags
+echo "apt-get build-dep $package"
+echo "./configure ${CONFIGURE_FLAGS:--j$DEFAULT_CONCURRENCY}"
+echo "make $MAKE_FLAGS"
+
+exit 0

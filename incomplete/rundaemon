@@ -1,0 +1,149 @@
+#!/bin/bash
+# loopa en daemon utifall den kraschar
+
+## settings
+
+DAEMON_NAME='telldusd'  # namn, vadsom
+DAEMON_BIN='telldusd'	# relativ eller absolut (/usr/bin/)
+DAEMON_ARGS='--nodaemon --debug'
+RESTART_DELAY=5         # delay efter att det kraschat tills vi restartar den
+SIGNAL_TIMEOUT=10		# hur många sekunder vi låter daemonen försöka stänga
+						# ner sig själv, innan vi lessnar och forcerar
+
+
+## internals: here be dragons
+BASENAME="${0##*/}"
+PID=
+DAEMON_REAL="$(which "$DAEMON_BIN")" || \
+	err "could not find absolute path of %s; exiting" $DAEMON_BIN
+
+## functions
+
+start_daemon() {
+    # starta daemon
+    $DAEMON_REAL $DAEMON_ARGS >&1 &
+    export PID=$!
+    disown
+}
+
+say() {
+    # echo, fast lite finare
+    local pattern="$1"
+    shift 2>/dev/null
+    printf -- "### [%s: %s] ${pattern}\n" "$BASENAME" "$DAEMON_NAME" "$@"
+}
+
+err() {
+	say "$@"
+	exit 1
+}
+
+get_pid() {
+    local IFS garbage
+    unset PID
+    #ps Tho pid,cmd | grep -- "^ *[0-9]\+ .*[^/]*/*$DAEMON_BIN $DAEMON_ARGS\$"
+    read PID garbage <<< "$(ps ho pid,cmd | \
+		grep -- "^ *[0-9]\+ .*[^/]*/*$DAEMON_BIN $DAEMON_ARGS\$")"
+    ( [[ $PID ]] && [[ -d /proc/$PID ]] ) || { unset PID; return 1; }
+    export PID
+}
+
+instance_exists() {
+	local IFS result
+    result="$(ps haxo pid,cmd | grep -- "[^a-zA-Z0-9_~-]$DAEMON_BIN " \
+		| grep -v ' grep ')"
+	[[ $result ]] && return 0 || return 1
+}
+
+wait_for_close() {
+	local pid=$1
+	while [[ -d /proc/${pid:-'-1'} ]]; do sleep 1; done
+}
+
+force_close() {
+    # stäng ner daemon varesig den vill eller inte
+    local i
+    get_pid || return 0
+
+    # försök stänga daemon (job %1) som vanligt, returnera direkt om den inte finns
+    say "sending SIGTERM ..."
+    kill $PID &>/dev/null
+
+    #  10 sekunder, repetera en koll huruvida den stängdes, returnera om borta
+    for i in $(seq 1 $SIGNAL_TIMEOUT); do
+        get_pid || return 0
+        printf '.'
+        sleep 1
+    done
+
+    # annars stäng med SIGKILL (-9)
+    echo #pad
+    say "sending SIGKILL"
+    kill -9 $PID &>/dev/null
+    get_pid || return 0
+}
+
+interrupt() {
+    # skriv fint meddelande!
+    echo #pad
+    err "SIGINT caught"
+}
+
+reload() {
+    # stäng ner och starta upp igen
+    say "SIGHUP caught, restarting daemon ..."
+
+    # markera på något sätt så monitor_instance inte triggas i de få sekunderna daemonen inte körs
+    WE_ARE_RESTARTING=1
+    force_close
+}
+
+die() {
+	force_close
+	say "exiting\n"
+}
+
+main_loop() {
+    # starta, monitora, restarta tills Ctrl+C, HUP monitoras separat
+    while true; do
+		say "starting daemon"
+        start_daemon
+        [ "$PID" ] || err "did not start!"
+        say "PID = %d\n" $PID
+        #wait $PID 2>/dev/null
+        wait_for_close $PID
+
+        if [ "$WE_ARE_RESTARTING" ]; then
+			unset WE_ARE_RESTARTING
+			say "restarting loop in %d" $RESTART_DELAY
+		else
+			say "DAEMON UNEXPECTEDLY CLOSED, RESTARTING IN %d ... (Ctrl+C to abort)" $RESTART_DELAY
+		fi
+
+        sleep $RESTART_DELAY
+    done
+    # är vi här så Ctrl+Cade vi
+}
+
+set_traps() {
+    # SIGINT: Ctrl+C, visa fint meddelande och dö
+    trap 'interrupt' SIGINT
+    # SIGHUP: bara kill -HUP (pid), om vi vill forcera en omstart
+    trap 'reload' SIGHUP
+    # EXIT:   triggas alltid när scriptet avslutas, även vid SIGINT, ingen aning om SIGKILL
+    trap 'die' EXIT
+}
+
+main() {
+    # huvudfunktionen
+    # fånga signaler (Ctrl+C etc) så vi hanterar dem fint
+    set_traps
+    # starta huvudloopen
+    instance_exists && { say "daemon already running!"; exit 0; }
+    main_loop
+}
+
+
+## execution start
+
+main

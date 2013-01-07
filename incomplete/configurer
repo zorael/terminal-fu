@@ -1,0 +1,124 @@
+#!/bin/bash
+
+CONF="confflags"
+BANNER_BEGIN="#<-- FLAGS BEGIN ###"
+BANNER_END="#--> FLAGS END ###"
+BANNER_LEGEND="#?# USE _EMPTY for empty (\"\"), _NOVALUE for value-less flags"
+
+ARGS=
+
+generate() {
+	local IFS def rest
+	
+	printf "%s\n%s\n\n" "$BANNER_LEGEND" "$BANNER_BEGIN" > $CONF
+	
+	IFS=','
+	while read def rest; do
+		type="$def"
+		type="${type##AC_ARG_}"
+		opt="${type#*(}"
+		type="${type%%(*}"
+		opt="${opt#[}"
+		opt="${opt%]}"
+		opt="${opt//-/_}"
+		echo "${type,,}-${opt}="
+	done >> $CONF << _EOF
+$(egrep -o 'AC_ARG_(ENABLE|WITH)\(.{1,20},' configure.ac)
+_EOF
+	
+	printf "\n%s\n" "$BANNER_END" >> $CONF
+	echo "$CONF written"
+}
+
+err() {
+	local errno msg noshift
+	errno="$1"
+	
+	case "$errno" in
+		NUM_ARGS) msg="invalid number of arguments sent to function %s" ;;
+		BAD_SETTING) msg="unknown value of setting %s" ;;
+		UNK_SECTION) msg="unknown settings section \"%s\"" ;;
+	*)	msg="unknown error: $errno"
+		noshift=1
+		;;
+	esac
+	
+	[ ! "$noshift" ] && shift
+	printf "ERROR: ${msg:-undefined}\n" "$@"
+	exit 1
+}
+
+conf() {
+	[ ! "$1" ] && return 0
+	local flag constant rawvalue prefix
+
+	constant="$1"
+	rawvalue="$(eval echo \$${constant})"
+
+	case "$rawvalue" in
+		1|true|TRUE|yes|YES)	prefix="enable" ;;
+		0|false|FALSE|no|NO|"")	prefix="disable" ;;
+		*) return 1 ;;
+	esac
+	
+	flag="$constant"
+	flag="${flag,,}"
+	flag="${flag//_/-}"
+	
+	echo "--${prefix}-${flag}"
+	return 0
+}
+
+
+iterate_settings() {
+	local IFS constant value section first flag takesvalue
+	
+	IFS='='
+	while read flag value; do
+		[ ! "$flag" ] && continue
+		unset first trigger prefix bool arg needsvalue
+		
+		first="$(echo $flag | cut -c1-4)"
+		
+		[ "$first" = "#-->" ] && break
+		[ "$first" = "#<--" ] && continue
+		
+		needsvalue=1
+		
+		case "$value" in
+			"") continue ;;
+			1|true|TRUE|yes|YES) value=yes ;;
+			0|false|FALSE|no|NO) value=no ;;
+			_EMPTY) value="" ;;
+			_NOVALUE) unset value needsvalue ;;
+			*) # leave as-is
+		esac
+		
+		flag="${flag//_/-}"
+		flag="--${flag}${needsvalue:+=}${value:+"$value"}"
+		echo "$flag" >&2
+		ARGS="${ARGS:+$ARGS }$flag"
+		done << _EOF
+$(sed -n "/^$BANNER_BEGIN/,/^$BANNER_END/p;" $CONF)
+_EOF
+}
+
+case "$1" in
+	noflag|noflags)
+		shift
+		;;
+	generate|gen|new)
+		generate
+		exit
+		;;
+	*) . /etc/rc.local ;;
+esac
+
+iterate_settings
+
+echo "./configure $ARGS"
+./configure $ARGS "$@"
+errlvl=$?
+
+echo "exit $errlvl"
+exit $errlvl

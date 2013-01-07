@@ -1,0 +1,176 @@
+#!/bin/bash
+
+IBUS_PACKAGES='ibus-anthy'   # should pull all of ibus
+UIM_PACKAGES='uim uim-anthy' # likewise, though uim-anthy doesn't pull uim
+HISTORY_FILE='/var/run/im-test.installed-packages'
+PURGE=1
+DRY_RUN=1
+
+UIM_ENV='XIM=uim
+XIM_PROGRAM=/usr/bin/uim-xim
+QT_IM_MODULE=uim
+GTK_IM_MODULE=uim'
+
+IBUS_ENV='XIM=ibus
+XIM_PROGRAM=/usr/bin/ibus-daemon
+XIM_PROGRAM_ARGS="-xd"
+QT_IM_MODULE=ibus
+GTK_IM_MODULE=ibus'
+
+err() {
+    local errtype msg
+    errtype="$1"
+    [ "$1" ] && shift
+    
+    case "$errtype" in
+        INSTALL)        msg="failed to install packages: %s" ;;
+        REMOVE)         msg="failed to remove packages: %s" ;;
+        HISTORY_FILE)   msg="could not %s history file $HISTORY_FILE" ;;
+        INVALID_ARGS)   msg="invalid arguments passed to function %s: %s" ;;
+        GENERAL)        msg="'%s' exited with errors" ;;
+        *) msg="$errtype" ;;
+    esac
+    
+    printf "[error] ${msg:-undefined}\n" "$@"
+    exit 1
+}
+
+ensure_root() {
+    # checking for $ROOTED so as not to cause an infinite loop if sudo doesn't
+    # give us UID 0 for whatever reason
+    if [ ! "$ROOTED" ] && [ $UID -gt 0 ]; then
+        sudo $0 root "$@"
+        exit $?
+    fi
+}
+
+update_lists() {
+    #apt-get update  # ignore errors
+    LISTS_UPDATED=1
+}
+
+is_installed() {
+    local pkg
+    pkg=$1
+    
+    [ ! "$(dpkg --get-selections $pkg 2>/dev/null | \
+        grep "^$pkg[[:space:]]\+install\$")" ] && return 1
+
+    echo "$pkg already installed" 1>&2
+    return 0
+}
+
+install_packages() {
+    [ ! "$LISTS_UPDATED" ] && update_lists
+    local packagelist
+    packagelist="$(refine_list "$@")"
+    [ ! "$packagelist" ] && return 0
+    
+    apt-get install ${DRY_RUN:+'-s'} $packagelist || err INSTALL "$packagelist"
+    log_installation "$packagelist"
+}
+
+refine_list() {
+    local IFS package newlist
+    
+    for package in "$@"; do
+        is_installed "$package" || newlist="${newlist:+$newlist }$package"
+    done
+
+    echo "$newlist"
+}
+
+log_installation() {
+    touch "$HISTORY_FILE" || err HISTORY_FILE write
+    echo #padding
+    echo "Recording as installed: $*"
+    echo #padding
+    printf "%s\n" "$@" >> "$HISTORY_FILE"
+}
+
+uninstall() {
+    [ ! -r "$HISTORY_FILE" ] && err HISTORY_FILE read
+    local IFS packagelist
+    while read package; do
+        [ ! "$package" ] && continue
+        echo "tagging $package for uninstallation" 1>&2
+        packagelist="${packagelist:+$packagelist }$package"
+    done < "$HISTORY_FILE"
+
+    [ ! "$packagelist" ] && { echo "Nothing to remove."; exit 0; }
+
+    apt-get autoremove ${DRY_RUN:+'-s'} ${PURGE:+'--purge'} $packagelist \
+        || err REMOVE "$packagelist"
+}
+
+installation_notes() {
+    local variables notes
+    case "$1" in
+        uim)
+            variables="$UIM_ENV"
+            notes="\
+Configuration:    /usr/bin/uim-pref-*
+Toolbar:          /usr/bin/uim-toolbar-*"
+            ;;
+        ibus)
+            variables="$IBUS_ENV"
+            notes="\
+Configuration:    /usr/bin/ibus-setup
+Toolbar:          (should pop up when you enable an input method)"
+            ;;
+        *) err INVALID_ARGS installation_notes "${1:-(empty)}" ;;
+    esac
+    
+    cat << _EOF
+
+To temporarily enable $1, export these variables;
+
+$variables
+
+Then simply run a program (eg text editor) from the same terminal session.
+
+$notes
+_EOF
+}
+
+usage() {
+    cat << _EOF
+usage: ${0##*/} [uim|ibus|uninstall]
+_EOF
+}
+
+## execution start
+
+case "$1" in
+    root)
+        ROOTED=1
+        shift
+        ;;
+    noupdate)
+        LISTS_UPDATED=1
+        shift
+        ;;
+esac
+
+case "$1" in
+    uim)
+        ensure_root "$@"
+        install_packages $UIM_PACKAGES
+        installation_notes uim
+        ;;
+    ibus)
+        ensure_root "$@"
+        install_packages $IBUS_PACKAGES
+        installation_notes ibus
+        ;;
+    uninstall)
+        ensure_root "$@"
+        uninstall
+        rm -fv "$HISTORY_FILE"
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+exit 0

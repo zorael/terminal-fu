@@ -1,0 +1,168 @@
+#!/bin/bash
+
+_ENABLE_COLORS=1
+_INDENTATION=1
+_DISTANCE=3
+_COLOR_WEIGHT=1
+_HEADLINES=3
+
+_PREV_COLOR=
+_LONGEST_NAME_LENGTH=
+_FILES=
+_NUMDIRS=
+_NUMFILES=
+_PADDED=
+
+IFS=$'\n'
+
+rotate_color() {
+	[ ${_PREV_COLOR:-36} -gt 35 ] && _PREV_COLOR=30
+	_PREV_COLOR=$((_PREV_COLOR+1))
+	get_color_glyph $_PREV_COLOR
+}
+
+get_color_glyph() {
+	[ ! "$_ENABLE_COLORS" ] && return
+	local color clear
+	case ${1:-0} in
+		GREY|GRAY)	color=30 ;;
+		RED)		color=31 ;;
+		GREEN)		color=32 ;;
+		BROWN)		color=33 ;;
+		BLUE)		color=34 ;;
+		MAGENTA)	color=35 ;;
+		CYAN)		color=36 ;;
+		CLEAR)		clear=0  ;;
+		[0-9][0-9])	color=$1 ;; # can use pattern matching but would need extglob
+		*)
+			printf -- "err: unknown color specified: %s\n" "${1:-(nothing)}" >&2
+			return 1
+			;;
+	esac
+	printf -- "\033[${clear:-"${_COLOR_WEIGHT};$color"}m"
+}
+
+report_stats() {
+	local files=${_NUMFILES:-0}
+	local dirs=${_NUMDIRS:-0}
+	printf -- "\n%d %s with %d %s skipped\n" $files "$(parse_genus $files file files)" $dirs "$(parse_genus $dirs directory directories)"
+}
+
+parse_genus() {
+	# $1 number, $2 singular, $3 plural
+	[[ $1 = 1 || $1 = -1 ]] && printf -- "$2" || printf -- "$3"
+}
+
+get_longest_filename() {
+	local IFS files this longest
+	for this in ${_FILES[@]}; do
+		probe_file "$this" &>/dev/null || continue
+		[[ ${#this} -gt $longest ]] && longest=${#this}
+		printf "."
+	done
+	_LONGEST_NAME_LENGTH=$longest
+}
+
+concat_args_into_var() {
+	local file all_files
+	for file in ${@:-$(ls -A1)}; do
+		[ ! -e "$file" ] && { echo "[vh] cannot read $file"; continue; }
+		( [ ! -f "$file" ] || [ ! -r "$file" ] ) && { let _NUMDIRS++; continue; }
+		let _NUMFILES++
+		all_files="${all_files:+${all_files}$IFS}$file"
+	done
+	_FILES="$all_files"
+}
+
+s_probe_file() {
+	local file
+	[[ ! -r "$file" || -d "$file" || -c "$file" || -p "$file" || -S "$file" ]] && return 1
+	cut -c1 &>/dev/null || return 1
+	case "$probe" in
+		*"ASCII text"*|*": empty"|*"very short file"*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+probe_file() {
+	local probe file numlines
+	file="$1"
+	probe="$(file -- "$file")"
+	case "$probe" in
+		*ASCII*)
+			sed -- "/^\$/d; 1,$((_HEADLINES*2))p" "$file" | wc -l
+			return 0
+			;;
+		*ERROR*) echo "i/o error" ;;
+		*read*)  echo "no read permission";;
+		*) ;; # go silent
+	esac
+	return 1
+}
+
+#iterate_files() {
+#	local IFS files longest _this lines
+#	#IFS=$'\n'
+#	files=${2[*]}
+#	longest=$1
+#	for _this in ${files[@]}; do
+#		lines=$(wc -l < "$_this")
+#		echo #padding
+#		a="%${_INDENTATION}s%s%-${longest}%s%s%s\n"
+#		printf "$a" "$_this"
+#		
+#	done
+#}
+
+print_file_head() {
+	local IFS
+	head -n3 "$1"
+}
+
+## execution start
+
+# concatenate args into _FILES
+concat_args_into_var "$@"
+
+# get max length
+get_longest_filename
+
+# print columns of file <spacing> line
+for file in $_FILES; do
+	unset probe numlines error line i prefix
+	probe="$(probe_file "$file")"
+	case $? in
+		0) numlines=$probe ;;
+		1) [ "$probe" ] && error="$probe" || continue ;;
+	esac
+
+	[ ! "$_PADDED" ] && { echo ""; _PADDED=1; }
+	prefix="$file"
+	[ "$error" ] && file="$0"
+
+	rotate_color
+	while read line; do
+		#[ ! "$line" ] && continue
+		let i++
+		case ${error:-$((_HEADLINES-$i))} in
+			-[1-9])
+				get_color_glyph CLEAR
+				line="[$((numlines-$_HEADLINES-$i)) lines truncated]"
+				unset i
+				;;
+			$error)
+				line="< $error >"
+				unset i
+				;;
+			*) ;; # all is well
+		esac
+
+		printf -- "%${_INDENTATION}s%-$((_LONGEST_NAME_LENGTH+_DISTANCE))s%s%s\n" "" "$prefix" "$i" "${i:+: }$line"
+
+		unset prefix
+		[ ! "$i" ] && break
+	done < "$file"
+done
+
+get_color_glyph CLEAR
+report_stats
