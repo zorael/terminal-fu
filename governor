@@ -43,6 +43,7 @@ freq_available() {
 }
 
 freq_parse_args() {
+	echo "dirp darp derp $*"
 }
 
 err() {

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [[ $UID -gt 0 ]]; then
+	echo "sudo ${0##*/}"
+	sudo $0 "$@"
+	retcode=$?
+	echo "exit $retcode"
+	exit $retcode
+fi
+
+apt-get update
+apt-get dist-upgrade -V

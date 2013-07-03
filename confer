@@ -1,0 +1,83 @@
+#!/bin/bash
+
+SECTION_CONF="Configuration:"
+SECTION_INSTDIRS_BASIC="Installation directories:"
+SECTION_INSTDIRS_FINE="Fine tuning of the installation directories:"
+SECTION_PROGNAMES="Program names:"
+SECTION_SYSTYPE="System types:"
+SECTION_FEATURES="Optional Features:"
+SECTION_PACKAGES="Optional Packages:"
+SECTION_ENV="Some influential environment variables:"
+
+IFS=$'\n'
+SECTION=
+rm /tmp/lia
+while read flag; do
+	case "$flag" in
+		\ *) ;; # not a section header; do nothing
+		*)
+			case "$flag" in
+				"$SECTION_CONF") SECTION=CONF ;;
+				"$SECTION_INSTDIRS_BASIC"|"$SECTION_INSTDIRS_FINE")
+					SECTION=INSTDIRS
+					;;
+				"$SECTION_PROGNAMES") SECTION=PROGNAMES ;;
+				"$SECTION_SYSTYPE") SECTION=SYSTYPE ;;
+				"$SECTION_FEATURES") SECTION=FEATURES ;;
+				"$SECTION_PACKAGES") SECTION=PACKAGES ;;
+				"$SECTION_ENV") SECTION=ENV ;;
+				*) continue ;;
+			esac
+			printf "\n%s\n" "# $flag" | tee -a /tmp/lia
+			continue
+			;;
+	esac
+	
+	( [ ! "$SECTION" ] || [ ! "$flag" ] ) && continue
+	unset option
+	
+	case "$SECTION" in
+		ENV)
+			option="$(expr "$flag" : '^\ *\([A-Z_]\+\).*')"
+			;;
+		*)
+			case "$flag" in
+				*-?,\ --*)
+					flag="${flag##*-?, }"
+					flag="${flag%% *}"
+					;;
+			esac
+
+			option="$(expr "$flag" : '^\ *--\([a-zA-Z_-]\+\).*')"
+
+			case "$option" in
+				""|help|version|FEATURE|PACKAGE) continue ;;
+				enable-*)	option=${option##enable-}  ;;
+				disable-*)	option=${option##disable-} ;;
+				with-*)		option=${option##with-}    ;;
+				without-*)	option=${option##without-} ;;
+			esac
+			case "$option" in
+				PACKAGE|FEATURE) continue ;;
+			esac
+			option=${option//-/_}
+			;;
+	esac
+
+	eval [ "\$_ALREADY_SET_${SECTION}_${option}" ] && continue
+	eval export _ALREADY_SET_${SECTION}_${option}=1
+	eval export ${SECTION}_LIST=\"\${${SECTION}_LIST:+\$${SECTION}_LIST:}$option\"
+	echo "${SECTION}_${option}" | tee -a /tmp/lia
+done << _EOF
+$(./configure --help | grep -v '^\( \{10,\}\|$\)')
+_EOF
+
+IFS=':'
+for section in FEATURES INSTDIRS PROGNAMES PACKAGES CONF ENV; do
+	echo "--- $section ---"
+	for entry in $(eval echo \"\$${section}_LIST\"); do
+		[ "$section" = ENV ] && echo "$entry" || echo "${entry//_/-}"
+	done
+done
+
+exit 0

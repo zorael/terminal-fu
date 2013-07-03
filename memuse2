@@ -1,0 +1,25 @@
+#!/bin/bash
+
+FORMAT_CMD=
+NUM_PROCESSES=0
+BUFFER=
+
+[ "$1" = long ] && FORMAT_CMD=cmd || FORMAT_CMD=comm
+
+gather() {
+	local IFS rss pid cmd
+	while read rss pid cmd; do
+		[ ! "$rss" ] && continue
+		NUM_PROCESSES=$((NUM_PROCESSES+1))
+		BUFFER="${BUFFER:+$BUFFER }$(printf '%9.1f Mb %10d: %s\n' "'$(echo $rss/1024 | bc -l)" $pid "$cmd")"
+	done << _EOF
+$(ps xo rss,pid,$FORMAT_CMD --no-header | sort -g)
+_EOF
+}
+
+echo "Parsing process list ..." >&2
+gather
+echo "$BUFFER"
+echo "$NUM_PROCESSES processes total" >&2
+
+exit 0

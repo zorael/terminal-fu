@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ $UID -gt 0 ]; then
+	echo "sudo $0"
+	sudo $0
+	errorlevel=$?
+	echo "exit $errorlevel"
+	exit $errorlevel
+fi
+
+echo "You are root!"
+
+modprobe -r parport lp ppdev parport_pc serio_raw joydev
+#stop avahi-daemon
+stop cron
+stop cups
+service bluetooth stop
+killall kactivitymanagerd
+killall bluedevil-helper
+
+exit 0

@@ -1,0 +1,27 @@
+#!/bin/bash
+
+err() {
+  echo "$1 threw errorlevel $2"
+  exit $2
+}
+
+PREFIX=$1
+[ ! "$PREFIX" ] && PREFIX="/usr"
+
+echo "cmake -DCMAKE_INSTALL_PREFIX=$PREFIX .."
+cmake -DCMAKE_INSTALL_PREFIX="$PREFIX" ..
+errlvl=$?
+[ $errlvl -gt 0 ] && err cmake $errlvl
+
+echo "make -j8"
+make -j8
+errlvl=$?
+[ $errlvl -gt 0 ] && err make $errlvl
+
+echo "sudo make -j4 install"
+sudo make -j4 install
+errlvl=$?
+[ $errlvl -gt 0 ] && err "make install" $errlvl
+
+echo "exit 0"
+exit 0

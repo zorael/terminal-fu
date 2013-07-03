@@ -1,18 +1,20 @@
 #!/bin/sh
-# updatehosts: fetch someonewhocares.org hosts file and append to our own
+# updatehosts: fetch external hosts files and append to our own
 
 
 ## Settings ###################################################################
 HOSTS="${1:-/etc/hosts}"
-EXCLUDE='rover.ebay.com'  # separate multiple entries with colons
-HOSTS_URL='http://someonewhocares.org/hosts/zero/hosts'  ## hosts -> 0.0.0.0
-#HOSTS_URL='http://someonewhocares.org/hosts/hosts'      ## hosts -> 127.0.0.1
+#EXCLUDE='rover.ebay.com'  # separate multiple entries with colons
+#HOSTS_URL='http://someonewhocares.org/hosts/zero/hosts'  ## hosts -> 0.0.0.0
+#HOSTS_URL='http://someonewhocares.org/hosts/hosts'       ## hosts -> 127.0.0.1
+HOSTS_URL='http://winhelp2002.mvps.org/hosts.txt'
 
 
 ## Internals; here be dragons #################################################
 DELIM='## END STATIC HOSTS ##'
-SED_COMMENT_HOST='s/^\(127\.0\.0\.1\|0\.0\.0\.0\) %s$/#\\0 # excluded/g'
-SED_REMOVE_LOCAL='/^#<localhost>$/,/^#<\/localhost>$/d'
+SED_COMMENT_HOST='s/^\(127\|0\)\.0\.0\.\(1\|0\)\( \+\)%s$/#\\0\1# excluded/g'
+#SED_REMOVE_LOCAL='/^#<localhost>$/,/^#<\/localhost>$/d'  # someonewhocares
+SED_REMOVE_LOCAL='/^\(127\.0\.0\.1\|::1\)  localhost$/d'     # mvps
 SED_SCRUB_HOSTS='/^%s$/,$d'
 KEEP_EXTERNAL_LOCALHOST=
 TMP_PRIMARY=
@@ -40,7 +42,7 @@ err() {
     esac
     shift 2>/dev/null
     
-    printf "\n[!] ERROR: $msg\n" "$@" 1>&2
+    printf -- "\n[!] ERROR: $msg\n" "$@" 1>&2
     
     exit 1
 }
@@ -55,7 +57,7 @@ step() {
 	local pattern="$1"
 	shift 2>/dev/null
 	
-	printf "\n[%d] $pattern " $STEP "$@"
+	printf -- "\n[%d] $pattern " $STEP "$@"
 }
 
 
@@ -64,7 +66,7 @@ scrub_old() {
     step "Scrubbing hosts file of old additions"
     
     # prepare regex by inserting the delimeter into it
-    regex="$(printf "$SED_SCRUB_HOSTS" "$DELIM")"
+    regex="$(printf -- "$SED_SCRUB_HOSTS" "$DELIM")"
     
     #echo "sed \"$regex\" $TMP_SECONDARY" >&2
     sed_i "$regex" "$TMP_SECONDARY" || err WRITE_TO_FILE "$TMP_SECONDARY"
@@ -80,7 +82,7 @@ sed_i() {
     local file="$2"
     
     sed "$expression" "$file" > "$TMP_SED" || return 1
-    cp -f "$TMP_SED" "$file"
+    mv -f "$TMP_SED" "$file"
     
     return $?
 }
@@ -101,7 +103,7 @@ download_hosts() {
     # count number of uncommented lines in our temp file
     num_hosts=$(get_num_entries "$TMP_PRIMARY") || err GET_NUM_ENTRIES
     
-    printf "\n... %d host definitions loaded%s" \
+    printf -- '\n... %d host definitions loaded%s' \
 	$num_hosts "${num_excluded:+" ($num_excluded commented out")}"
 }
 
@@ -193,10 +195,10 @@ commit() {
     cp -f "$TMP_SECONDARY" "$HOSTS" 2>/dev/null && return 0
     
     # if we're still here we failed, so try sudo and then su -c
-    printf "\n... failed; retrying with sudo\n"
+    printf -- '\n... failed; retrying with sudo\n'
     sudo cp -f "$TMP_SECONDARY" "$HOSTS" 2>/dev/null && return 0
     
-    printf "\n... failed; retrying with su -c\n"
+    printf '\n... failed; retrying with su -c\n'
     su -c "cp -f "$TMP_SECONDARY" "$HOSTS"" 2>/dev/null && return 0
     
     err WRITE_TO_FILE "$HOSTS"

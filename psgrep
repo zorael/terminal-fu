@@ -1,26 +1,60 @@
 #!/bin/bash
+# psgrep: greps ps output for processes by name patterns
 
-if [ ! "$1" ]; then
-	echo "usage: $0 [PATTERN]"
+
+# internals
+DOLLAR_ZERO="$0"
+SHORT_NAME="${0##*/}"
+
+
+# functions
+show_usage() {
+	printf -- 'usage: %s [pattern]\n' "$SHORT_NAME"
 	exit 0
-fi
+}
 
-probe="$(ps axo command | grep "$*" | grep -v "grep $*" | grep -v "/bin/bash $0 $*")"
+say() {
+	[[ $# -gt 0 ]] || err NUM_ARGS say $# more
+	local IFS msg
 
-if [ "$probe" == "" ]; then
-	echo "no matches for pattern $*"
-	exit 0
-fi
+	case "$1" in
+		ERR_NO_MATCHES) msg='no matches for pattern "%s"' ;;
+		ERR_NUM_ARGS)   msg='internal error! function %s received %d arguments, expected %s' ;;
+		ERR_|"") msg='empty message :(' ;; # drop down
+		*)	msg="$*"
+			shift $#
+			;;
+	esac
 
-header="USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND"
-matches="$(ps aux | grep "$*" | grep -v "0:00 grep" | grep -v "0:00 /bin/bash $0 $*")"
+	shift 2>&1
+	printf -- "[%s] $msg\n" "$SHORT_NAME" "$@"
+}
 
-if [ "$matches" ]; then
-	echo "$header"
-	echo "$matches" | grep --color=auto "$*"
-else
-	echo "match pattern failure!"
+err() {
+	local IFS first
+	first="ERR_$1"
+
+	shift 2>&1
+	say "$first" "$@"
+
 	exit 1
-fi
+}
 
-exit 0
+main() {
+	[[ $# -gt 0 ]] || show_usage
+	local IFS LC_ALL all escaped buf
+
+	all="$(ps axo user,pid,cmd)"
+	buf="$(echo "$all" | grep -- "^[^ ]\+ \+[0-9]\+ .*$*" 2>/dev/null | grep -v -- "^[^ ]\+ \+[0-9]\+ $SHELL $0 $*")"
+	[[ $? -eq 0 ]] || err NO_MATCHES "$*"
+
+	echo "$all" | head -n1  # banner
+	echo "$buf" | grep --color=always -- "$*"  # for colors
+
+	return 0
+}
+
+# execution start
+
+main "$@"
+exit $?

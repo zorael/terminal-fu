@@ -1,0 +1,56 @@
+#!/bin/bash
+URL="http://data.gpo.zugaina.org/ROKO__/sys-kernel/geek-sources/files/3.7.0/"
+
+listdirs() {
+    curl -s "$1" | grep -o '<a href="[^"]\+/">[^P]' | sed 's:^<a href="\(.*\)/">.$:\1:g'
+}
+
+fetchlist() {
+    local list="$(curl -s "${1}/patch_list")"
+    echo "$list" | grep -q "404 Not Found" && echo "404" >&2 && return
+    echo "$list" | grep -v '^#'
+}
+
+getlisted() {
+    echo "getlisted '$1'"
+    local IFS url list p
+    IFS=$'\n'
+    url="$1"
+    list=( $(fetchlist "$url") )
+    for p in ${list[@]}; do
+        [[ $p ]] || continue
+        echo "grabbing: $p"
+        wget -q "${url}/$p"
+    done
+}
+
+getall() {
+    local IFS url dirs dir
+    url="$1"
+    dirs=( $(listdirs "$url") )
+    printf "[*] getall --> %s\n" "$url"
+    for dir in ${dirs[@]}; do
+        printf "(subgetall %s)\n" "$dir"
+        getall "${url}/$dir"
+    done
+    getlisted "$url"
+}
+
+main() {
+    local IFS url
+    for url in "$@"; do
+        getall "$url"
+    done
+}
+
+url="$1"
+dirs=( $(listdirs "$url") )
+for dir in ${dirs[@]}; do
+    echo "--> $dir"
+    mkdir "$dir"
+    cd "$dir"
+    getlisted "${url}/$dir"
+    cd ..
+done
+#listdirs "$@"
+#main "$@"

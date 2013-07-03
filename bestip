@@ -6,9 +6,10 @@ PATTERN_PING='s/rtt min\/avg\/max\/mdev = \(.\+\)\/\(.\+\)\/\(.\+\)\/.\+ ms/\1 \
 PACKETS=3
 unset IFS
 
+printf -- 'fetching ip list\n'
 IPS=( $(curl -Ls --retry 3  "$URL" | sed -n "$PATTERN_IP") ) || exit
 
-printf "pinging %d ips...\n" ${#IPS[@]}
+printf -- 'pinging %d ips...\n' ${#IPS[@]}
 
 i=0
 for ip in ${IPS[@]}; do
@@ -26,5 +27,5 @@ for ip in ${IPS[@]}; do
 	printf '\n'
 done
 
-printf "%d ips pinged (%d dead)\n" $((${#IPS[@]}-$dead)) $dead
-printf "best was %s with average %.2f ms response time\n" $best_ip $best
+printf -- '%d ips pinged (%d dead)\n' $((${#IPS[@]}-$dead)) $dead
+printf -- 'best was %s with average %.2f ms response time\n' $best_ip $best

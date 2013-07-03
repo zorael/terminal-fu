@@ -1,0 +1,71 @@
+#!/bin/bash
+
+UPDATE="apt-get update:fetching package lists"
+#DELTA="debdelta-upgrade:fetching deltas"
+UPGRADE="aptitude full-upgrade:upgrading"
+
+_TIMESTAMP=
+
+if [ "$(pidof dpkg apt-get aptitude cupt synaptic)" ]; then
+	echo "packager already running?"
+	echo "exit 1"
+	exit 1
+fi
+
+gettime() {
+	_TIMESTAMP="$(date +%H:%M)"
+}
+
+if [ $UID -gt 0 ]; then
+	gettime
+	printf "[%s] sudo %s\n" "$_TIMESTAMP" "${0##*/}"
+	sudo "$0"
+	errorlevel=$?
+	echo #padding
+	printf "exit %d\n" $errorlevel
+	exit $errorlevel
+fi
+
+err() {
+	local errtype message
+	errtype="$1"
+	case "$errtype" in
+		INSUFFICIENT_ARGS)
+			message="insufficient number of args passed to function %s()"
+			;;
+		*)	message="$1" ;;
+	esac
+	shift || exit 1
+	printf "ERROR: $message\n" "$@"
+	exit 1
+}
+
+main()  {
+	local stage stagedef command desc errorlevel timestamp
+	for stage in UPDATE DELTA UPGRADE; do
+		stagedef="$(eval echo \"\$$stage\")"
+		[ ! "$stagedef" ] && continue
+		command="${stagedef%:*}"
+		desc="${stagedef#*:}"
+		gettime
+		printf "[%s] %s\n\n" "$_TIMESTAMP" "$desc"
+		$command
+		errorlevel=$?
+		gettime
+		printf "\n[%s] %s exit %d\n" "$_TIMESTAMP" "$command" $errorlevel
+	done
+	return $errorlevel
+}
+
+## Execution start
+
+echo "You are root!"
+
+main "$@"
+errorlevel=$?
+
+echo #padding
+echo "sync"
+sync
+
+exit $errorlevel

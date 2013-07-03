@@ -1,0 +1,90 @@
+#!/bin/sh
+# adds a display resolution
+
+# settings
+DEV_NAME="LVDS1"
+
+
+# functions
+show_usage() {
+	printf -- 'usage: %s [x] [y] ([refresh rate])\n' "${0##*/}"
+	exit 0
+}
+
+say() {
+	[ $# -gt 0 ] || err NUM_ARGS say $# "1 or more"
+	local IFS msg sign
+
+	case "$1" in
+		ERR_NUM_ARGS)    msg='function %s received %d arguments, expected %s' ;;
+		ERR_NO_MODELINE) msg='no valid modeline returned from cvt %s %s %s' ;;
+		ERR_CMD_RETCODE) msg='%s returned retcode %d' ;;
+		ERR_EMPTY_ARGS)  msg='%s called with empty args' ;;
+		ERR_EMPTY_STRING)msg='internal error, empty string (%s)' ;;
+		ERR_|"") msg='empty message :(' ;;
+		*)	msg="$*"
+			shift $#
+			;;
+	esac
+	[ "${1%%ERR_*}" ] && sign='*' || sign='!'
+
+	shift 2>&1
+
+	printf -- "[%s] $msg\n" "$sign" "$@"
+}
+
+err() {
+	[ $# -gt 0 ] || err NUM_ARGS err $# "1 or more"
+	local IFS first
+	first="ERR_$1"
+	shift 2>&1
+
+	say "$first" "$@"
+	exit 1
+}
+
+add_mode() {
+	( [ $# -eq 2 ] || [ $# -eq 3 ] ) || err NUM_ARGS add_mode $# "2 or 3"
+	( [ "$1" ] && [ "$2" ] ) || err EMPTY_ARGS add_mode
+	local IFS x y r res rate
+	xrandr | grep -q -- "${1}x${2}" && return 1
+
+	modeline="$(cvt $1 $2 ${3:-60} | grep '^Modeline')"
+	[ "$modeline" ] || err EMPTY_STRING "modeline $1 $2 ${3:-60} = '$modeline'"
+	echo "$modeline"
+
+	modeline="${modeline##Modeline }"
+	[ "$modeline" ] || err EMPTY_STRING "modeline after pattern sub"
+
+	res="$(echo "$modeline" | sed 's|^"\([^"]\+\)"|\1|')"
+	[ "$res" ] || err EMPTY_STRING "res after modeline sed"
+
+	rate="${res##*_}"
+	[ "$rate" ] || err EMPTY_STRING "rate from pattern sub of res"
+
+	rate="${rate%% *}"
+	[ "$rate" ] || err EMPTY_STRING "rate after pattern sub of itself"
+
+	res="${res%%_*}"
+	[ "$res" ] || err EMPTY_STRING "res after pattern sub"
+
+	modeline="${modeline##\"${res}_$rate\" }"
+	[ "$modeline" ] || err EMPTY_STRING "modeline after pattern sub"
+
+	xrandr --newmode "$res" $modeline || err CMD_RETCODE "xrandr --newmode \"$res\" $modeline" $?
+	xrandr --addmode "$DEV_NAME" $res || err CMD_RETCODE "xrandr --addmode \"$DEV_NAME\" $res" $?
+}
+
+main() {
+	[ $# -gt 0 ] || show_usage
+	[ "$1" ] || err EMPTY_ARGS main
+	local IFS res
+	add_mode "$@" || printf -- 'mode already exists (%s)\n' "${1}x${2}"
+	return 0
+}
+
+
+# execution start
+
+main "$@"
+exit $?
